@@ -1,0 +1,12 @@
+__pycache__
+.idea
+snapshots
+experiments
+*.pyc
+*.hdf
+*.out
+*.meta
+*.index
+*.data
+*.json
+*~

@@ -1,0 +1,193 @@
+[general]
+# error   40
+# warning 30
+# info    20
+# debug   10
+logging = 20
+debug = false
+overwrite = false
+
+[data]
+train_data = '/home/peter/data/datasets/data_wormbodies/train'
+val_data = '/home/peter/data/datasets/data_wormbodies/test'
+test_data = '/home/peter/data/datasets/data_wormbodies/test'
+voxel_size = [1, 1]
+input_format = 'zarr'
+raw_key = "volumes/raw_bf"
+gt_key = "volumes/gt_instances"
+one_instance_per_channel_gt = "volumes/gt_labels"
+num_channels = 1
+
+[model]
+train_net_name = 'train_net'
+test_net_name = 'test_net'
+train_input_shape = [ 256, 256,]
+test_input_shape = [ 512, 512,]
+patchshape = [ 1, 41, 41,]
+patchstride = [ 1, 1, 1,]
+num_fmaps = 40
+max_num_inst = 2
+fmap_inc_factors = [ 2, 2, 2, 2,]
+fmap_dec_factors = [ 1, 1, 1, 1,]
+downsample_factors = [ [ 2, 2,], [ 2, 2,], [ 2, 2,], [ 2, 2,],]
+activation = 'relu'
+padding = 'valid'
+kernel_size = 3
+num_repetitions = 2
+# upsampling = 'trans_conv' or 'resize_conv', prefer resize_conv?
+upsampling = 'resize_conv'
+overlapping_inst = true
+code_units = 252
+autoencoder_chkpt = "this"
+
+[optimizer]
+optimizer = 'Adam'
+lr = 0.0001
+
+[preprocessing]
+clipmax = 1500
+
+[training]
+batch_size = 1
+num_gpus = 1
+num_workers = 10
+cache_size = 40
+max_iterations = 400000
+checkpoints = 20000
+snapshots = 2000
+profiling = 500
+
+[training.sampling]
+min_masked = 0.001
+min_masked_overlap = 0.0001
+overlap_min_dist = 0
+overlap_max_dist = 15
+probability_overlap = 0.5
+probability_fg = 0.5
+
+[training.augmentation.elastic]
+control_point_spacing = [10, 10]
+jitter_sigma = [1, 1]
+rotation_min = -45
+rotation_max = 45
+
+[training.augmentation.intensity]
+scale = [0.9, 1.1]
+shift = [-0.1, 0.1]
+
+[training.augmentation.simple]
+# mirror = [0, 1, 2]
+# tranpose = [0, 1, 2]
+
+[prediction]
+output_format = 'zarr'
+aff_key = 'volumes/pred_affs'
+code_key = 'volumes/pred_code'
+fg_key = 'volumes/pred_numinst'
+fg_thresh = 0.5
+decode_batch_size = 1024
+
+[validation]
+
+[testing]
+num_workers = 5
+
+[vote_instances]
+patch_threshold = 0.9
+fc_threshold = 0.5
+cuda = true
+blockwise = false
+num_workers = 8
+chunksize = [92, 92, 92]
+debug = false
+select_patches_for_sparse_data = true
+save_no_intermediates = true
+output_format = 'hdf'
+parallel = false
+includeSinglePatchCCS = true
+sample = 1.0
+removeIntersection = true
+mws = false
+isbiHack = false
+mask_fg_border = false
+graphToInst = false
+skipLookup = false
+skipConsensus = false
+skipRanking = false
+skipThinCover = true
+affinity_graph_voting = false
+affinity_graph_voting_selected = false
+termAfterThinCover = false
+fg_thresh_vi = 0.1
+consensus_interleaved_cnt = false
+consensus_norm_prob_product = true
+consensus_prob_product = true
+consensus_norm_aff = true
+vi_bg_use_inv_th = false
+vi_bg_use_half_th = false
+vi_bg_use_less_than_th = true
+rank_norm_patch_score = true
+rank_int_counter = false
+patch_graph_norm_aff = true
+blockwise_old_stitch_fn = false
+only_bb = false
+# overlap = [ 0, 0, 5,]
+flip_cons_arr_axes = false
+return_intermediates = false
+# aff_graph = "/path/to/file"
+# selected_patch_pairs = "/path/to/file"
+# crop_z_s = 100
+# crop_y_s = 100
+# crop_x_s = 100
+# crop_z_e = 150
+# crop_y_e = 150
+# crop_x_e = 150
+
+
+[evaluation]
+num_workers = 1
+res_key = 'volumes/instances'
+metric = 'confusion_matrix/th_0_5/fscore'
+
+[postprocessing]
+remove_small_comps = 600
+
+[postprocessing.watershed]
+output_format = 'hdf'
+
+[visualize]
+samples_to_visualize = ['A10', 'C17']
+show_patches = true
+
+[autoencoder]
+train_net_name = 'train_net'
+test_net_name = 'test_net'
+train_input_shape = [1, 41, 41]
+test_input_shape = [1, 41, 41]
+patchshape = [1, 41, 41]
+patchstride = [1, 1, 1]
+# network_type = 'conv' or 'dense'
+network_type = 'conv'
+activation = 'relu'
+code_activation = 'sigmoid'
+# dense
+encoder_units = [500, 1000]
+decoder_units = [1000, 500]
+# conv
+num_fmaps = [32, 64, 128]
+downsample_factors = [[2, 2], [2, 2], [2, 2]]
+upsampling = 'resize_conv'
+kernel_size = 3
+num_repetitions = 2
+padding = 'same'
+# if network_type = conv
+# code_method = 'global_average_pool' or 'dense' or 'conv'? 
+code_method = 'conv1x1'
+# code_method = 'global_average_pool'
+# code_method = 'dense'
+code_units = 252
+regularizer = 'l2'
+regularizer_weight = 1e-4
+loss_fn = 'mse'
+# upsampling = 'trans_conv' or 'resize_conv', prefer resize_conv?
+overlapping_inst = false
