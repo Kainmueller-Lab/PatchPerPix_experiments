@@ -1,0 +1,153 @@
+[general]
+# error   40
+# warning 30
+# info    20
+# debug   10
+logging = 20
+debug = false
+overwrite = false
+
+[data]
+train_data = "/home/peter/data/datasets/data_L1/data_L1_140_all/train"
+val_data = "/home/peter/data/datasets/data_L1/data_L1_140_all/val"
+test_data = "/home/peter/data/datasets/data_L1/data_L1_140_all/test"
+voxel_size = [ 1, 1, 1,]
+input_format = "zarr"
+gt_key = "volumes/gt_labels"
+num_channels = 1
+validate_on_train = false
+
+[model]
+train_net_name = "train_net"
+test_net_name = "test_net"
+train_input_shape = [ 140, 140, 140,]
+test_input_shape = [ 236, 236, 124,]
+patchshape = [ 9, 9, 9,]
+patchstride = [ 1, 1, 1,]
+num_fmaps = 20
+max_num_inst = 2
+fmap_inc_factors = [ 3, 3, 3,]
+fmap_dec_factors = [ 1, 1, 1,]
+downsample_factors = [ [ 2, 2, 2,], [ 2, 2, 2,], [ 2, 2, 2,],]
+activation = "relu"
+padding = "valid"
+kernel_size = 3
+num_repetitions = 2
+# upsampling = 'trans_conv' or 'resize_conv', prefer resize_conv?
+upsampling = "resize_conv"
+overlapping_inst = false
+regress_num_inst = false
+crop_factor = true
+
+[optimizer]
+optimizer = "Adam"
+lr = 0.0001
+
+[preprocessing]
+clipmax = 1500
+
+[training]
+batch_size = 1
+num_gpus = 1
+num_workers = 16
+cache_size = 40
+max_iterations = 50
+checkpoints = 20000
+snapshots = 10
+profiling = 500
+auto_mixed_precision = true
+use_tf_data = true
+
+[prediction]
+output_format = "zarr"
+aff_key = "volumes/pred_affs"
+fg_key = "volumes/pred_fgbg"
+
+[validation]
+params = [ "patch_threshold", "fc_threshold"]
+patch_threshold = [ 0.5,]
+fc_threshold = []
+checkpoints = [60000, 100000]
+
+[testing]
+num_workers = 5
+
+[vote_instances]
+patch_threshold = 0.5
+fc_threshold = 0.5
+cuda = true
+blockwise = true
+num_parallel_samples = 1
+num_parallel_blocks = 1
+num_workers = 1
+chunksize = [ 140, 140, 80,]
+debug = false
+select_patches_for_sparse_data = true
+save_no_intermediates = true
+output_format = "hdf"
+parallel = false
+includeSinglePatchCCS = true
+sample = 1.0
+removeIntersection = true
+mws = false
+isbiHack = false
+mask_fg_border = false
+graphToInst = false
+skipLookup = false
+skipConsensus = false
+skipRanking = false
+skipThinCover = false
+affinity_graph_voting = false
+affinity_graph_voting_selected = false
+termAfterThinCover = false
+do_nms = false
+do_nms2 = false
+score_threshold = false
+add_suffix = false
+consensus_without_overlap = false
+one_instance_per_channel = false
+do_floodfill = false
+dilate_instances = true
+fg_thresh_vi = 0.1
+consensus_interleaved_cnt = false
+consensus_norm_prob_product = true
+consensus_prob_product = true
+consensus_norm_aff = true
+vi_bg_use_inv_th = true
+vi_bg_use_half_th = false
+vi_bg_use_less_than_th = false
+rank_norm_patch_score = true
+rank_int_counter = false
+patch_graph_norm_aff = true
+blockwise_old_stitch_fn = false
+only_bb = true
+overlap = [ 0, 0, 5,]
+flip_cons_arr_axes = false
+return_intermediates = true
+
+[evaluation]
+num_workers = 1
+res_key = "vote_instances"
+filterSz = 512
+metric = "confusion_matrix.th_0_5.AP"
+use_linear_sum_assignment = true
+
+[visualize]
+save_mip = true
+
+[postprocessing.watershed]
+output_format = "hdf"
+
+[training.augmentation.elastic]
+control_point_spacing = [ 20, 20, 20,]
+jitter_sigma = [ 1, 1, 1,]
+rotation_min = -45
+rotation_max = 45
+
+[training.augmentation.intensity]
+scale = [ 0.9, 1.1,]
+shift = [ -0.1, 0.1,]
+
+[training.augmentation.simple]
+# mirror = [0, 1, 2]
+# tranpose = [0, 1, 2]

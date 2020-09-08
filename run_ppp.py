@@ -378,6 +378,7 @@ def train(args, config, train_folder):
              **config['data'],
              **config['model'],
              **config['training'],
+             **config['optimizer'],
              **config.get('preprocessing', {}))
 
 
