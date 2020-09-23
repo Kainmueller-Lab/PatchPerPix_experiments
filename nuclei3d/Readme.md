@@ -5,7 +5,7 @@ It is recommended to set vote_instances/blockwise in the config to true for larg
 
 
 ## Data
-Unfortunately the data is not public at this moment.
+Unfortunately the data is not public at this moment. (If you have access to the data, and would like to know the train/val/test split specified by StarDist, please just send us an email.)
 
 
 ## Setups
