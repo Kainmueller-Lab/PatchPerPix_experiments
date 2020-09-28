@@ -78,13 +78,9 @@ def mk_net(**kwargs):
     summaries = tf.summary.merge(loss_sums, name="summaries")
 
     # optimizer
-    learning_rate = tf.placeholder_with_default(kwargs['lr'], shape=(),
-                                                name="learning-rate")
-    opt = tf.train.AdamOptimizer(
-        learning_rate=learning_rate,
-        beta1=0.95,
-        beta2=0.999,
-        epsilon=1e-8)
+    opt = getattr(tf.train, kwargs['optimizer'])(
+                    *kwargs['args'].values(),
+                    **kwargs['kwargs'])
     optimizer = opt.minimize(loss)
 
     tf.train.export_meta_graph(filename=os.path.join(kwargs['output_folder'],

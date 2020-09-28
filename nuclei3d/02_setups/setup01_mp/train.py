@@ -130,6 +130,13 @@ def train_until(**kwargs):
         pred_affs: '/volumes/pred_affs',
     }
 
+    optimizer_args = None
+    if kwargs['auto_mixed_precision']:
+        optimizer_args = (kwargs['optimizer'],
+                          {
+                              'args': kwargs['args'],
+                              'kwargs': kwargs['kwargs']
+                          })
     augmentation = kwargs['augmentation']
     pipeline = (
         tuple(
@@ -213,7 +220,7 @@ def train_until(**kwargs):
                 net_names['pred_affs']: pred_affs_gradients,
             },
             auto_mixed_precision=kwargs['auto_mixed_precision'],
-            learning_rate=kwargs['lr'],
+            optimizer_args=optimizer_args,
             use_tf_data=kwargs['use_tf_data'],
             save_every=kwargs['checkpoints'],
             snapshot_every=kwargs['snapshots']) +
