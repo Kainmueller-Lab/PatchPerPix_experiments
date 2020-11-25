@@ -47,6 +47,12 @@ For validation and evaluation this package is required:
 [Evaluation](https://github.com/Kainmueller-Lab/evaluate-instance-segmentation)
 
 
+### Data preperation
+
+The code expects the data to be in the zarr format (similar to hdf5, but uses the underlying file system to enable parallel read and write)
+The dataset specific subfolders (e.g. [wormbodies](wormbodies)) contain further information on how to get and preprocess the data.
+
+
 ## Usage
 The master script `run_ppp.py` can be used to control all aspects of the experiments.
 
