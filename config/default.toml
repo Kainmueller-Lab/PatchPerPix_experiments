@@ -124,21 +124,21 @@ one_instance_per_channel = false    # optional
 
 [evaluation]
 num_workers = 1
-res_key = 'volumes/instances'
-metric = 'confusion_matrix/th_0_5/fscore'
+res_key = 'vote_instances'
+metric = 'confusion_matrix.th_0_5.AP'
 foreground_only = false
-summary = ["confusion_matrix/th_0_5/AP",
-	"confusion_matrix/th_0_5/precision",
-	"confusion_matrix/th_0_5/recall",
-	"confusion_matrix/th_0_6/AP",
-	"confusion_matrix/th_0_6/precision",
-	"confusion_matrix/th_0_6/recall",
-	"confusion_matrix/th_0_7/AP",
-	"confusion_matrix/th_0_7/precision",
-	"confusion_matrix/th_0_7/recall",
-	"confusion_matrix/th_0_8/AP",
-	"confusion_matrix/th_0_8/precision",
-	"confusion_matrix/th_0_8/recall",
+summary = ["confusion_matrix.th_0_5.AP",
+	"confusion_matrix.th_0_5.precision",
+	"confusion_matrix.th_0_5.recall",
+	"confusion_matrix.th_0_6.AP",
+	"confusion_matrix.th_0_6.precision",
+	"confusion_matrix.th_0_6.recall",
+	"confusion_matrix.th_0_7.AP",
+	"confusion_matrix.th_0_7.precision",
+	"confusion_matrix.th_0_7.recall",
+	"confusion_matrix.th_0_8.AP",
+	"confusion_matrix.th_0_8.precision",
+	"confusion_matrix.th_0_8.recall",
 ]
 
 [postprocessing]

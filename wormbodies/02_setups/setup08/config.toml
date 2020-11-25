@@ -100,7 +100,6 @@ cuda = true
 blockwise = false
 num_workers = 8
 chunksize = [92, 92, 92]
-debug = false
 select_patches_for_sparse_data = true
 save_no_intermediates = true
 output_format = 'hdf'
@@ -147,8 +146,8 @@ return_intermediates = false
 
 [evaluation]
 num_workers = 1
-res_key = 'volumes/instances'
-metric = 'confusion_matrix/th_0_5/fscore'
+res_key = 'vote_instances'
+metric = 'confusion_matrix.th_0_5.AP'
 
 [postprocessing]
 remove_small_comps = 600

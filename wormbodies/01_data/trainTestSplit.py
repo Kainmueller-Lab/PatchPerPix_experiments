@@ -133,11 +133,11 @@ def main():
 
     for fl in trainFls:
         copy_func(os.path.join(args.in_dir, fl + fmt),
-                  os.path.join(args.in_dir, trainD, fl + fmt))
+                  os.path.join(trainD, fl + fmt))
 
     for fl in testFls:
         copy_func(os.path.join(args.in_dir, fl + fmt),
-                  os.path.join(args.in_dir, testD, fl + fmt))
+                  os.path.join(testD, fl + fmt))
 
 
 if __name__ == "__main__":

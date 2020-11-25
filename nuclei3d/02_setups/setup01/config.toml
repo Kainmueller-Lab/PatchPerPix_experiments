@@ -79,7 +79,6 @@ num_parallel_samples = 1
 num_parallel_blocks = 1
 num_workers = 1
 chunksize = [ 140, 140, 80,]
-debug = false
 select_patches_for_sparse_data = true
 save_no_intermediates = true
 output_format = "hdf"
