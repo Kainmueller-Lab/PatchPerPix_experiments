@@ -10,7 +10,8 @@ https://data.broadinstitute.org/bbbc/BBBC010/
 The data is provided in tif-files, however our code expects zarr-files
 
 ```
-python consolidate_data.py -i ~/data/datasets/data_wormbodies/ -o ~/data/datasets/data_wormbodies --raw-gfp-min 0 --raw-gfp-max 4095 --raw-bf-min 0 --raw-bf-max 3072 --out-format zarr --parallel 50
+python consolidate_data.py -i ~/data/datasets/data_wormbodies -o ~/data/datasets/data_wormbodies --raw-gfp-min 0 --raw-gfp-max 4095 --raw-bf-min 0 --raw-bf-max 3072 --out-format zarr --parallel 50
+python trainTestSplit.py -i ~/data/datasets/data_wormbodies -o ~/data/datasets/data_wormbodies -f zarr
 ```
 (adapt the input and output paths)
 
