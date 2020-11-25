@@ -63,4 +63,8 @@ python run_ppp.py --setup setup08 --config wormbodies/02_setups/setup08/config.t
 
 With `--do TASK` you can set the sub task that should be executed (or `all` for the whole pipeline), `--root PATH` sets the output directory, `--app APP` the experiment (e.g. wormbodies) and `--setup SETUP` the specific setup of that experiment (e.g. setup01).
 
-Within the respective experiment folder (e.g. wormbodies) you can find some information on where to get the data and how to convert into the correct format.
+The command above creates a time stamped experiment folder under the path specified by `--root`.
+To continue training or for further validation adapt the command. Change the `--config` parameter to point to the config file in the experiment folder and remove the `--root` flag and replace it with the `-id` flag and point it to the experiment folder. The tasks specified after `--do` depend on what you want to do:
+```
+python run_ppp.py --setup setup08 --config experiments/wormbodies_setup08_201125_120524/config.toml --do  validate_checkpoints predict decode label evaluate --app wormbodies -id experiments/wormbodies_setup08_201125_120524
+```
