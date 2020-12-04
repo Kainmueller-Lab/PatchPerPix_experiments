@@ -66,16 +66,16 @@ def predict(**kwargs):
     zf = zarr.open(os.path.join(kwargs['output_folder'],
                                 kwargs['sample'] + '.zarr'), mode='w')
     zf.create(code_key,
-              shape=[kwargs['code_units']] + list(shape),
-              chunks=[kwargs['code_units']] + list(chunksize),
+              shape=[int(kwargs['code_units'])] + list(shape),
+              chunks=[int(kwargs['code_units'])] + list(chunksize),
               dtype=np.float16)
     zf[code_key].attrs['offset'] = [0, 0]
     zf[code_key].attrs['resolution'] = kwargs['voxel_size']
 
     if kwargs['overlapping_inst']:
         zf.create(numinst_key,
-                  shape=[kwargs['max_num_inst'] + 1] + list(shape),
-                  chunks=[kwargs['max_num_inst'] + 1] + list(chunksize),
+                  shape=[int(kwargs['max_num_inst']) + 1] + list(shape),
+                  chunks=[int(kwargs['max_num_inst']) + 1] + list(chunksize),
                   dtype=np.float16)
         zf[numinst_key].attrs['offset'] = [0, 0]
         zf[numinst_key].attrs['resolution'] = kwargs['voxel_size']

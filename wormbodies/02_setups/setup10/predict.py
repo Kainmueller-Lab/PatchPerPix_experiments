@@ -65,16 +65,16 @@ def predict(**kwargs):
     zf = zarr.open(os.path.join(kwargs['output_folder'],
                                 kwargs['sample'] + '.zarr'), mode='w')
     zf.create('volumes/pred_affs',
-              shape=[np.prod(kwargs['patchshape'])] + list(shape),
-              chunks=[np.prod(kwargs['patchshape'])] + list(chunksize),
+              shape=[int(np.prod(kwargs['patchshape']))] + list(shape),
+              chunks=[int(np.prod(kwargs['patchshape']))] + list(chunksize),
               dtype=np.float16)
     zf['volumes/pred_affs'].attrs['offset'] = [0, 0]
     zf['volumes/pred_affs'].attrs['resolution'] = kwargs['voxel_size']
 
     if kwargs['overlapping_inst']:
         zf.create('volumes/pred_numinst',
-                  shape=[kwargs['max_num_inst'] + 1] + list(shape),
-                  chunks=[kwargs['max_num_inst'] + 1] + list(chunksize),
+                  shape=[int(kwargs['max_num_inst']) + 1] + list(shape),
+                  chunks=[int(kwargs['max_num_inst']) + 1] + list(chunksize),
                   dtype=np.float16)
         zf['volumes/pred_numinst'].attrs['offset'] = [0, 0]
         zf['volumes/pred_numinst'].attrs['resolution'] = kwargs['voxel_size']

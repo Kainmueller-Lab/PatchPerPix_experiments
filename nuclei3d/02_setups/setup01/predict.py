@@ -73,8 +73,8 @@ def predict(**kwargs):
     zf = zarr.open(os.path.join(kwargs['output_folder'],
                                 kwargs['sample'] + '.zarr'), mode='w')
     zf.create('volumes/pred_affs',
-              shape=[np.prod(kwargs['patchshape'])] + list(shape),
-              chunks=[np.prod(kwargs['patchshape'])] + list(shape)[:-1] + [20],
+              shape=[int(np.prod(kwargs['patchshape']))] + list(shape),
+              chunks=[int(np.prod(kwargs['patchshape']))] + list(shape)[:-1] + [20],
               dtype=np.float32)
     zf['volumes/pred_affs'].attrs['offset'] = [0, 0, 0]
     zf['volumes/pred_affs'].attrs['resolution'] = kwargs['voxel_size']
