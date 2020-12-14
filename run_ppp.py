@@ -741,6 +741,7 @@ def validate_checkpoints(args, config, data, checkpoints, train_folder,
 
     for checkpoint in checkpoints:
         for param_set in param_sets:
+            print(config)
             val_config = deepcopy(config)
             for k in param_set.keys():
                 val_config['vote_instances'][k] = param_set[k]
@@ -1276,25 +1277,25 @@ def cross_validate(args, config, data, train_folder, test_folder):
     best_setup_fold1 = max(results_fold1.items(), key=operator.itemgetter(1))[0]
     best_setup_fold2 = max(results_fold2.items(), key=operator.itemgetter(1))[0]
 
-    acc1 = []
+    acc_fold2 = []
     for s in samples_fold2:
-        acc1.append(results[best_setup_fold1][0][s])
-    acc2 = []
+        acc_fold2.append(results[best_setup_fold1][0][s])
+    acc_fold1 = []
     for s in samples_fold1:
-        acc2.append(results[best_setup_fold2][0][s])
+        acc_fold1.append(results[best_setup_fold2][0][s])
 
-    acc = np.mean(acc1+acc2)
-    acc1 = np.mean(acc1)
-    acc2 = np.mean(acc2)
+    acc = np.mean(acc_fold2 + acc_fold1)
+    acc_fold2 = np.mean(acc_fold2)
+    acc_fold1 = np.mean(acc_fold1)
 
     logger.info("%s CROSS: %.4f [%.4f (%s), %.4f (%s)]",
                 config['evaluation']['metric'], acc,
-                acc1, best_setup_fold2,
-                acc2, best_setup_fold1)
+                acc_fold1, best_setup_fold2,
+                acc_fold2, best_setup_fold1)
     print("%s CROSS: %.4f [%.4f (%s), %.4f (%s)]" % (
         config['evaluation']['metric'], acc,
-        acc1, best_setup_fold2,
-        acc2, best_setup_fold1))
+        acc_fold1, best_setup_fold2,
+        acc_fold2, best_setup_fold1))
 
     ap_ths = ["confusion_matrix.avAP",
               "confusion_matrix.th_0_5.AP",
@@ -1304,9 +1305,23 @@ def cross_validate(args, config, data, train_folder, test_folder):
               "confusion_matrix.th_0_9.AP"
               ]
     for ap_th in ap_ths:
-        metric_dicts = results[best_setup_fold2][1]
         metrics = {}
+        # get AP's for fold1
+        metric_dicts = results[best_setup_fold2][1]
         for sample, metric_dict in metric_dicts.items():
+            if sample not in samples_fold1:
+               continue
+            if metric_dict is None:
+                continue
+            for k in ap_th.split('.'):
+                metric_dict = metric_dict[k]
+            metrics[sample] = float(metric_dict)
+
+        # get AP's for fold2
+        metric_dicts = results[best_setup_fold1][1]
+        for sample, metric_dict in metric_dicts.items():
+            if sample not in samples_fold2:
+                continue
             if metric_dict is None:
                 continue
             for k in ap_th.split('.'):
