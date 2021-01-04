@@ -35,7 +35,7 @@ def train_until(**kwargs):
     gt_sample_mask = gp.ArrayKey('GT_SAMPLE_MASK')
 
     pred_code = gp.ArrayKey('PRED_CODE')
-    pred_code_gradients = gp.ArrayKey('PRED_CODE_GRADIENTS')
+    # pred_code_gradients = gp.ArrayKey('PRED_CODE_GRADIENTS')
     pred_numinst = gp.ArrayKey('PRED_NUMINST')
 
     with open(os.path.join(kwargs['output_folder'],
@@ -60,8 +60,7 @@ def train_until(**kwargs):
     request.add(gt_instances, output_shape_world)
     request.add(gt_sample_mask, output_shape_world)
     request.add(gt_affs, output_shape_world)
-    if kwargs['overlapping_inst']:
-        request.add(gt_numinst, output_shape_world)
+    request.add(gt_numinst, output_shape_world)
     # request.add(loss_weights_affs, output_shape_world)
 
     # when we make a snapshot for inspection (see below), we also want to
@@ -70,6 +69,7 @@ def train_until(**kwargs):
     snapshot_request = gp.BatchRequest()
     snapshot_request.add(raw_cropped, output_shape_world)
     snapshot_request.add(pred_code, output_shape_world)
+    # snapshot_request.add(pred_code_gradients, output_shape_world)
     if kwargs['overlapping_inst']:
         snapshot_request.add(pred_numinst, output_shape_world)
 
@@ -105,16 +105,19 @@ def train_until(**kwargs):
     datasets = {
         raw: 'volumes/raw_bf',
         gt_labels: 'volumes/gt_labels',
-        gt_instances: 'volumes/gt_instances'
+        gt_instances: 'volumes/gt_instances',
+        gt_numinst: 'volumes/gt_numinst'
     }
     array_specs = {
         raw: gp.ArraySpec(interpolatable=True),
         gt_labels: gp.ArraySpec(interpolatable=False),
-        gt_instances: gp.ArraySpec(interpolatable=False)
+        gt_instances: gp.ArraySpec(interpolatable=False),
+        gt_numinst: gp.ArraySpec(interpolatable=False)
     }
     inputs = {
         net_names['raw']: raw,
         net_names['gt_affs']: gt_affs,
+        net_names['gt_numinst']: gt_numinst
     }
 
     outputs = {
@@ -125,15 +128,12 @@ def train_until(**kwargs):
         raw: '/volumes/raw',
         raw_cropped: 'volumes/raw_cropped',
         gt_affs: '/volumes/gt_affs',
+        gt_numinst: '/volumes/gt_numinst',
         pred_code: '/volumes/pred_code',
-        pred_code_gradients: '/volumes/pred_code_gradients',
+        # pred_code_gradients: '/volumes/pred_code_gradients',
     }
     if kwargs['overlapping_inst']:
-        datasets[gt_numinst] = 'volumes/gt_numinst'
-        array_specs[gt_numinst] = gp.ArraySpec(interpolatable=False)
-        inputs[net_names['gt_numinst']] = gt_numinst
         outputs[net_names['pred_numinst']] = pred_numinst
-        snapshot[gt_numinst] = '/volumes/gt_numinst'
         snapshot[pred_numinst] = '/volumes/pred_numinst'
 
     augmentation = kwargs['augmentation']
@@ -220,7 +220,7 @@ def train_until(**kwargs):
         # convert labels into affinities between voxels
         nl.AddAffinities(
             neighborhood,
-            gt_labels,
+            gt_labels if kwargs['overlapping_inst'] else gt_instances,
             gt_affs,
             multiple_labels=kwargs['overlapping_inst']) +
 
@@ -240,7 +240,7 @@ def train_until(**kwargs):
             inputs=inputs,
             outputs=outputs,
             gradients={
-                net_names['pred_code']: pred_code_gradients,
+                # net_names['pred_code']: pred_code_gradients,
             },
             save_every=kwargs['checkpoints']) +
 

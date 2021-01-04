@@ -74,46 +74,48 @@ def mk_net(**kwargs):
     gt_affs_shape = [patchsize] + output_shape
     gt_affs = tf.placeholder(tf.float32, shape=gt_affs_shape, name="gt_affs")
 
+    gt_numinst = tf.placeholder(tf.int32, shape=[1] + output_shape,
+                                name="gt_numinst")
+    gt_numinstTmp = tf.squeeze(gt_numinst, 0)
+    gt_numinst_clipped = tf.clip_by_value(gt_numinstTmp, 0,
+                                          kwargs['max_num_inst'])
+
+    gt_fg = tf.equal(gt_numinstTmp, 1)
+
+    code = tf.transpose(tf.sigmoid(logitspatch), [1, 2, 0])
+    sample_cnt = 1024
+    gt_fg_loc = tf.where(gt_fg)
+    samples_loc = tf.random.uniform(
+        (tf.math.minimum(sample_cnt, tf.shape(gt_fg_loc)[0]),),
+        minval=0,
+        maxval=tf.shape(gt_fg_loc)[0],
+        dtype=tf.int32)
+    samples_loc = tf.gather(gt_fg_loc, samples_loc)
+    code_samples = tf.gather_nd(code, samples_loc)
+    gt_affs_samples = tf.gather_nd(tf.transpose(gt_affs, [1, 2, 0]),
+                                   samples_loc)
+
+    ae_config = kwargs['autoencoder']
+    ae_config['only_decode'] = True
+    ae_config['dummy_in'] = tf.placeholder(
+        tf.float32, (None,) + patchshape_squeezed)
+    ae_config['is_training'] = True
+    ae_config['input_shape_squeezed'] = patchshape_squeezed
+    net, sums, _ = autoencoder(code_samples, **ae_config)
+
+    # get loss
+    net = tf.reshape(net, (-1, patchsize), name="rs2")
+    losspatch = tf.losses.sigmoid_cross_entropy(
+        gt_affs_samples,
+        net)
+
     if kwargs['overlapping_inst']:
-        gt_numinst = tf.placeholder(tf.int32, shape=[1] + output_shape,
-                                    name="gt_numinst")
-        gt_numinstTmp = tf.squeeze(gt_numinst, 0)
-        gt_numinst_clipped = tf.clip_by_value(gt_numinstTmp, 0,
-                                              kwargs['max_num_inst'])
-
-        gt_fg = tf.equal(gt_numinstTmp, 1)
-        code = tf.transpose(tf.sigmoid(logitspatch), [1, 2, 0])
-        sample_cnt = 1024
-        gt_fg_loc = tf.where(gt_fg)
-        samples_loc = tf.random.uniform(
-            (tf.math.minimum(sample_cnt, tf.shape(gt_fg_loc)[0]),),
-            minval=0,
-            maxval=tf.shape(gt_fg_loc)[0],
-            dtype=tf.int32)
-        samples_loc = tf.gather(gt_fg_loc, samples_loc)
-        code_samples = tf.gather_nd(code, samples_loc)
-        gt_affs_samples = tf.gather_nd(tf.transpose(gt_affs, [1, 2, 0]),
-                                       samples_loc)
-
-        ae_config = kwargs['autoencoder']
-        ae_config['only_decode'] = True
-        ae_config['dummy_in'] = tf.placeholder(
-            tf.float32, (None,) + patchshape_squeezed)
-        ae_config['is_training'] = True
-        ae_config['input_shape_squeezed'] = patchshape_squeezed
-        net, sums, _ = autoencoder(code_samples, **ae_config)
-
-        # get loss
-        net = tf.reshape(net, (-1, patchsize), name="rs2")
-        losspatch = tf.losses.sigmoid_cross_entropy(
-            gt_affs_samples,
-            net)
         lossnuminst = tf.losses.sparse_softmax_cross_entropy(
             gt_numinst_clipped,
             tf.transpose(logitsnuminst, [1, 2, 0]))
         loss = losspatch + lossnuminst
     else:
-        loss = tf.losses.sigmoid_cross_entropy(gt_affs, logitspatch)
+        loss = losspatch
 
     # write loss to summary
     loss_sums = [tf.summary.scalar('loss_sum', loss)]
@@ -143,13 +145,13 @@ def mk_net(**kwargs):
         'raw': raw.name,
         'raw_cropped': raw_cropped.name,
         'gt_affs': gt_affs.name,
+        'gt_numinst': gt_numinst.name,
         'pred_code': pred_code.name,
         'loss': loss.name,
         'optimizer': optimizer.name,
         'summaries': summaries.name
     }
     if kwargs['overlapping_inst']:
-        names['gt_numinst'] = gt_numinst.name
         names['pred_numinst'] = pred_numinst.name
 
     with open(fn + '_names.json', 'w') as f:
