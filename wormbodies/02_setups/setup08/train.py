@@ -157,34 +157,40 @@ def train_until(**kwargs):
     )
     source_fg += gp.RandomProvider()
 
-    source_overlap = tuple(
-        sourceNode(
-            fls[t] + "." + kwargs['input_format'],
-            datasets=datasets,
-            array_specs=array_specs
-        ) +
-        gp.Pad(raw, context) +
+    if kwargs['overlapping_inst']:
+        source_overlap = tuple(
+            sourceNode(
+                fls[t] + "." + kwargs['input_format'],
+                datasets=datasets,
+                array_specs=array_specs
+            ) +
+            gp.Pad(raw, context) +
 
-        # chose a random location for each requested batch
-        nl.MaskCloseDistanceToOverlap(
-            gt_labels, gt_sample_mask,
-            sampling['overlap_min_dist'],
-            sampling['overlap_max_dist']
-        ) +
-        gp.RandomLocation(
-            min_masked=sampling['min_masked_overlap'],
-            mask=gt_sample_mask
+            # chose a random location for each requested batch
+            nl.MaskCloseDistanceToOverlap(
+                gt_labels, gt_sample_mask,
+                sampling['overlap_min_dist'],
+                sampling['overlap_max_dist']
+            ) +
+            gp.RandomLocation(
+                min_masked=sampling['min_masked_overlap'],
+                mask=gt_sample_mask
+            )
+            for t in range(ln)
         )
-        for t in range(ln)
-    )
-    source_overlap += gp.RandomProvider()
+        source_overlap += gp.RandomProvider()
+
+        source = (
+            (source_fg, source_overlap) +
+
+            # chose a random source (i.e., sample) from the above
+            gp.RandomProvider(probabilities=[sampling['probability_fg'],
+                                             sampling['probability_overlap']]))
+    else:
+        source = source_fg
 
     pipeline = (
-        (source_fg, source_overlap) +
-
-        # chose a random source (i.e., sample) from the above
-        gp.RandomProvider(probabilities=[sampling['probability_fg'],
-                                         sampling['probability_overlap']]) +
+        source +
 
         # elastically deform the batch
         gp.ElasticAugment(
