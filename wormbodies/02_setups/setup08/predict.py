@@ -6,6 +6,7 @@ import json
 import logging
 from datetime import datetime
 import zarr
+import h5py
 
 
 def predict(**kwargs):
@@ -13,7 +14,10 @@ def predict(**kwargs):
 
     raw = gp.ArrayKey('RAW')
     pred_code = gp.ArrayKey('PRED_AFFS')
-    pred_numinst = gp.ArrayKey('PRED_NUMINST')
+    if kwargs['overlapping_inst']:
+        pred_numinst = gp.ArrayKey('PRED_NUMINST')
+    else:
+        pred_fgbg = gp.ArrayKey('PRED_FGBG')
 
     with open(os.path.join(kwargs['input_folder'],
                            name + '_config.json'), 'r') as f:
@@ -26,10 +30,13 @@ def predict(**kwargs):
     input_shape_world = gp.Coordinate(net_config['input_shape']) * voxel_size
     output_shape_world = gp.Coordinate(net_config['output_shape']) * voxel_size
     context = (input_shape_world - output_shape_world) // 2
-    chunksize = list(np.asarray(output_shape_world) // 2)
+    chunksize = [int(c) for c in np.asarray(output_shape_world) // 2]
 
     raw_key = kwargs.get('raw_key', 'volumes/raw')
-    numinst_key = kwargs.get('fg_key', 'volumes/pred_numinst')
+    if kwargs['overlapping_inst']:
+        numinst_key = kwargs.get('fg_key', 'volumes/pred_numinst')
+    else:
+        fgbg_key = kwargs.get('fg_key', 'volumes/pred_fgbg')
     code_key = kwargs.get('code_key', 'volumes/pred_code')
 
     # add ArrayKeys to batch request
@@ -38,6 +45,8 @@ def predict(**kwargs):
     request.add(pred_code, output_shape_world, voxel_size=voxel_size)
     if kwargs['overlapping_inst']:
         request.add(pred_numinst, output_shape_world, voxel_size=voxel_size)
+    else:
+        request.add(pred_fgbg, output_shape_world, voxel_size=voxel_size)
 
     if kwargs['input_format'] != "hdf" and kwargs['input_format'] != "zarr":
         raise NotImplementedError("predict node for %s not implemented yet",
@@ -79,6 +88,13 @@ def predict(**kwargs):
                   dtype=np.float16)
         zf[numinst_key].attrs['offset'] = [0, 0]
         zf[numinst_key].attrs['resolution'] = kwargs['voxel_size']
+    else:
+        zf.create(fgbg_key,
+                  shape=[1] + list(shape),
+                  chunks=[1] + list(chunksize),
+                  dtype=np.float16)
+        zf[fgbg_key].attrs['offset'] = [0, 0]
+        zf[fgbg_key].attrs['resolution'] = kwargs['voxel_size']
 
     outputs = {
         net_names['pred_code']: pred_code,
@@ -89,6 +105,9 @@ def predict(**kwargs):
     if kwargs['overlapping_inst']:
         outputs[net_names['pred_numinst']] = pred_numinst
         outVolumes[pred_numinst] = numinst_key
+    else:
+        outputs[net_names['pred_fgbg']] = pred_fgbg
+        outVolumes[pred_fgbg] = fgbg_key
 
     pipeline = (
         source +

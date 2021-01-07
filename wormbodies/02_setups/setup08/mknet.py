@@ -35,10 +35,10 @@ def mk_net(**kwargs):
     print(model)
 
     num_patch_fmaps = kwargs['autoencoder']['code_units']
-    if not kwargs['overlapping_inst']:
-        num_inst_fmaps = 0
-    else:
+    if kwargs['overlapping_inst']:
         num_inst_fmaps = kwargs['max_num_inst'] + 1
+    else:
+        num_inst_fmaps = 1
 
     model = conv_pass(
         model,
@@ -58,7 +58,8 @@ def mk_net(**kwargs):
             logits, [num_patch_fmaps, num_inst_fmaps], 0)
         pred_numinst = tf.nn.softmax(logitsnuminst, axis=0)
     else:
-        logitspatch = logits
+        logitspatch, logits_fgbg = tf.split(
+            logits, [num_patch_fmaps, 1], 0)
 
     pred_code = logitspatch
     if kwargs['autoencoder'].get('code_activation') is not None:
@@ -74,13 +75,18 @@ def mk_net(**kwargs):
     gt_affs_shape = [patchsize] + output_shape
     gt_affs = tf.placeholder(tf.float32, shape=gt_affs_shape, name="gt_affs")
 
-    gt_numinst = tf.placeholder(tf.int32, shape=[1] + output_shape,
-                                name="gt_numinst")
-    gt_numinstTmp = tf.squeeze(gt_numinst, 0)
-    gt_numinst_clipped = tf.clip_by_value(gt_numinstTmp, 0,
-                                          kwargs['max_num_inst'])
+    if kwargs['overlapping_inst']:
+        gt_numinst = tf.placeholder(tf.int32, shape=[1] + output_shape,
+                                    name="gt_numinst")
+        gt_numinstTmp = tf.squeeze(gt_numinst, 0)
+        gt_numinst_clipped = tf.clip_by_value(gt_numinstTmp, 0,
+                                              kwargs['max_num_inst'])
+        gt_fg = tf.equal(gt_numinstTmp, 1)
+    else:
+        gt_fgbg = tf.placeholder(tf.float32, shape=[1] + output_shape,
+                                 name="gt_fgbg")
+        gt_fg = tf.squeeze(gt_fgbg, 0)
 
-    gt_fg = tf.equal(gt_numinstTmp, 1)
 
     code = tf.transpose(tf.sigmoid(logitspatch), [1, 2, 0])
     sample_cnt = 1024
@@ -105,6 +111,7 @@ def mk_net(**kwargs):
 
     # get loss
     net = tf.reshape(net, (-1, patchsize), name="rs2")
+    print(net.get_shape(), gt_affs_samples.get_shape())
     losspatch = tf.losses.sigmoid_cross_entropy(
         gt_affs_samples,
         net)
@@ -115,13 +122,19 @@ def mk_net(**kwargs):
             tf.transpose(logitsnuminst, [1, 2, 0]))
         loss = losspatch + lossnuminst
     else:
-        loss = losspatch
+        lossfgbg = tf.losses.sigmoid_cross_entropy(
+            gt_fgbg,
+            logits_fgbg)
+        pred_fgbg = tf.sigmoid(logits_fgbg)
+        loss = losspatch + lossfgbg
 
     # write loss to summary
-    loss_sums = [tf.summary.scalar('loss_sum', loss)]
+    loss_sums = [tf.summary.scalar('loss_sum', loss),
+                 tf.summary.scalar('loss_patch_sum', losspatch)]
     if kwargs['overlapping_inst']:
-        loss_sums.append(tf.summary.scalar('loss_patch_sum', losspatch))
         loss_sums.append(tf.summary.scalar('loss_numinst_sum', lossnuminst))
+    else:
+        loss_sums.append(tf.summary.scalar('loss_fgbg', lossfgbg))
     summaries = tf.summary.merge(loss_sums, name="summaries")
 
     global_step = tf.Variable(0, name='global_step', trainable=False,
@@ -145,14 +158,17 @@ def mk_net(**kwargs):
         'raw': raw.name,
         'raw_cropped': raw_cropped.name,
         'gt_affs': gt_affs.name,
-        'gt_numinst': gt_numinst.name,
         'pred_code': pred_code.name,
         'loss': loss.name,
         'optimizer': optimizer.name,
         'summaries': summaries.name
     }
     if kwargs['overlapping_inst']:
+        names['gt_numinst'] = gt_numinst.name
         names['pred_numinst'] = pred_numinst.name
+    else:
+        names['gt_fgbg'] = gt_fgbg.name
+        names['pred_fgbg'] = pred_fgbg.name
 
     with open(fn + '_names.json', 'w') as f:
         json.dump(names, f)

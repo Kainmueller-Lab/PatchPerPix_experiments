@@ -56,7 +56,7 @@ def decode_sample(decoder, sample, **kwargs):
             for i in range(1, pred_fg.shape[0])
         ]), axis=0).astype(np.uint8)
     else:
-        pred_fg = (pred_fg >= kwargs['fg_thresh']).astype(np.uint8)
+        pred_fg = np.squeeze((pred_fg >= kwargs['fg_thresh']).astype(np.uint8), axis=0)
 
     fg_coords = np.transpose(np.nonzero(pred_fg))
     num_batches = int(np.ceil(fg_coords.shape[0] / float(batch_size)))
