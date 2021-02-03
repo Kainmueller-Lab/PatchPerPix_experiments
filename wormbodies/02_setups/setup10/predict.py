@@ -27,6 +27,7 @@ def predict(**kwargs):
     output_shape_world = gp.Coordinate(net_config['output_shape']) * voxel_size
     context = (input_shape_world - output_shape_world) // 2
     chunksize = list(np.asarray(output_shape_world) // 2)
+    chunksize = [int(c) for c in chunksize]
 
     raw_key = kwargs.get('raw_key', 'volumes/raw')
 

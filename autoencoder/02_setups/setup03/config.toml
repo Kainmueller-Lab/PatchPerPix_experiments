@@ -1,0 +1,87 @@
+[general]
+# error   40
+# warning 30
+# info    20
+# debug   10
+logging = 20
+debug = false
+overwrite = false
+
+[data]
+train_data = '/home/peter/data/datasets/data_wormbodies/padded/train'
+val_data = '/home/peter/data/datasets/data_wormbodies/padded/test'
+test_data = '/home/peter/data/datasets/data_wormbodies/padded/test'
+voxel_size = [1, 1]
+input_format = 'zarr'
+gt_key = 'volumes/gt_instances'
+num_channels = 1
+
+[model]
+train_net_name = 'train_net'
+test_net_name = 'test_net'
+train_input_shape = [1, 41, 41]
+test_input_shape = [1, 41, 41]
+patchshape = [1, 41, 41]
+patchstride = [1, 1, 1]
+# network_type = 'conv' or 'dense'
+network_type = 'conv'
+activation = 'relu'
+code_activation = 'sigmoid'
+# dense
+encoder_units = [500, 1000]
+decoder_units = [1000, 500]
+# conv
+num_fmaps = [32, 64, 128]
+downsample_factors = [[2, 2], [2, 2], [2, 2]]
+upsampling = 'resize_conv'
+kernel_size = 3
+num_repetitions = 2
+padding = 'same'
+# if network_type = conv
+# code_method = 'global_average_pool' or 'dense' or 'conv'? 
+code_method = 'conv1x1_b'
+# code_method = 'global_average_pool'
+# code_method = 'dense'
+code_units = 252
+regularizer = 'l2'
+regularizer_weight = 1e-4
+loss_fn = 'mse'
+# upsampling = 'trans_conv' or 'resize_conv', prefer resize_conv?
+overlapping_inst = false
+
+[optimizer]
+optimizer = 'Adam'
+lr = 0.0001
+
+[training]
+batch_size = 256
+num_gpus = 1
+num_workers = 20
+cache_size = 40
+max_iterations = 10000
+checkpoints = 2000
+snapshots = 500
+profiling = 500
+
+[training.augmentation.elastic]
+control_point_spacing = [10, 10]
+jitter_sigma = [1, 1]
+rotation_min = -45
+rotation_max = 45
+
+[training.augmentation.intensity]
+scale = [0.9, 1.1]
+shift = [-0.1, 0.1]
+
+[training.augmentation.simple]
+# mirror = [0, 1, 2]
+# tranpose = [0, 1, 2]
+
+[prediction]
+output_format = 'hdf'
+batch_size = 256
+
+[evaluation]
+metric = 'cos_dist'
+batch_size = 256
+max_samples = 1024

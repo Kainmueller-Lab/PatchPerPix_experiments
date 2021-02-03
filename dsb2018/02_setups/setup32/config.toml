@@ -1,0 +1,146 @@
+[general]
+# error   40
+# warning 30
+# info    20
+# debug   10
+logging = 20
+debug = false
+overwrite = false
+
+[data]
+train_data = '/fast/AG_Kainmueller/phirsch/datasets/dsb2018/consolidated_csv_nonnorm/train'
+val_data = '/fast/AG_Kainmueller/phirsch/datasets/dsb2018/consolidated_csv_nonnorm/val'
+test_data = '/fast/AG_Kainmueller/phirsch/datasets/dsb2018/consolidated_csv_nonnorm/test'
+voxel_size = [ 1, 1,]
+input_format = "zarr"
+gt_key = "volumes/gt_labels"
+raw_key = "volumes/raw"
+num_channels = 1
+
+[model]
+train_net_name = "train_net"
+test_net_name = "test_net"
+train_input_shape = [ 268, 268,]
+test_input_shape = [ 460, 460,]
+patchshape = [ 1, 25, 25,]
+patchstride = [ 1, 1, 1,]
+num_fmaps = 40
+fmap_inc_factors = [ 2, 2, 2, 2,]
+fmap_dec_factors = [ 1.1, 1.1, 1.1, 1.1,]
+downsample_factors = [ [ 2, 2,], [ 2, 2,], [ 2, 2,], [ 2, 2,],]
+activation = "relu"
+padding = "valid"
+kernel_size = 3
+num_repetitions = 2
+upsampling = "resize_conv"
+
+[optimizer]
+loss = "ce"
+optimizer = "Adam"
+lr = 0.0001
+
+[preprocessing]
+clipmax = 1500
+
+[training]
+batch_size = 1
+num_gpus = 1
+num_workers = 10
+cache_size = 60
+max_iterations = 500000
+checkpoints = 25000
+snapshots = 10000
+profiling = 1000
+train_code = false
+
+[prediction]
+output_format = "zarr"
+aff_key = "volumes/pred_affs"
+
+[validation]
+params_product = [ "mws", "fg_thresh_vi",]
+params_zip = [ "patch_threshold", "fc_threshold",]
+mws = [ true, false,]
+fg_thresh_vi = [ 0.4, 0.5, -1.0,]
+patch_threshold = [ 0.95, 0.98, 0.99, 0.9]
+fc_threshold = [ 0.95, 0.98, 0.99, 0.9]
+checkpoints = [ 500000,]
+
+[vote_instances]
+patch_threshold = 0.9
+fc_threshold = 0.9
+cuda = true
+blockwise = false
+num_parallel_samples = 1
+num_parallel_blocks = 1
+num_workers = 8
+debug = false
+select_patches_for_sparse_data = true
+save_no_intermediates = true
+output_format = "hdf"
+parallel = false
+includeSinglePatchCCS = true
+sample = 1.0
+removeIntersection = true
+mws = true
+isbiHack = false
+mask_fg_border = false
+graphToInst = false
+skipLookup = false
+skipConsensus = false
+skipRanking = false
+skipThinCover = false
+affinity_graph_voting = false
+affinity_graph_voting_selected = false
+termAfterThinCover = false
+pad_with_ps = true
+fg_thresh_vi = 0.5
+consensus_interleaved_cnt = false
+consensus_norm_prob_product = true
+consensus_prob_product = true
+consensus_norm_aff = true
+vi_bg_use_inv_th = true
+vi_bg_use_half_th = false
+vi_bg_use_less_than_th = false
+rank_norm_patch_score = true
+rank_int_counter = false
+patch_graph_norm_aff = true
+blockwise_old_stitch_fn = false
+only_bb = false
+overlap = [ 0, 0, 5,]
+flip_cons_arr_axes = false
+return_intermediates = false
+use_score_oracle = false
+store_scores = false
+shuffle_patches = false
+
+[evaluation]
+num_workers = 1
+res_key = "vote_instances"
+metric = "confusion_matrix.th_0_5.AP"
+print_f_factor_perc_gt_0_8 = false
+use_linear_sum_assignment = true
+foreground_only = false
+summary = [ "confusion_matrix.avAP", "confusion_matrix.th_0_1.AP", "confusion_matrix.th_0_2.AP", "confusion_matrix.th_0_3.AP", "confusion_matrix.th_0_4.AP", "confusion_matrix.th_0_5.AP", "confusion_matrix.th_0_55.AP", "confusion_matrix.th_0_6.AP", "confusion_matrix.th_0_65.AP", "confusion_matrix.th_0_7.AP", "confusion_matrix.th_0_75.AP", "confusion_matrix.th_0_8.AP", "confusion_matrix.th_0_85.AP", "confusion_matrix.th_0_9.AP", "confusion_matrix.th_0_95.AP",]
+prediction_only = false
+
+[postprocessing]
+remove_small_comps = 600
+
+[visualize]
+save_mip = true
+
+[postprocessing.watershed]
+output_format = "hdf"
+
+[training.augmentation.elastic]
+control_point_spacing = [ 10, 10,]
+jitter_sigma = [ 1, 1,]
+rotation_min = -45
+rotation_max = 45
+
+[training.augmentation.intensity]
+scale = [ 0.9, 1.1,]
+shift = [ -0.1, 0.1,]
+
+[training.augmentation.simple]
