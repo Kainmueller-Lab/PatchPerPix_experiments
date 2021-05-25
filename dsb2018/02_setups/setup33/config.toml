@@ -150,7 +150,7 @@ metric = "confusion_matrix.th_0_5.avAP"
 print_f_factor_perc_gt_0_8 = false
 use_linear_sum_assignment = true
 foreground_only = false
-summary = [ "confusion_matrix.avAP", "confusion_matrix.th_0_1.AP", "confusion_matrix.th_0_2.AP", "confusion_matrix.th_0_3.AP", "confusion_matrix.th_0_4.AP", "confusion_matrix.th_0_5.AP", "confusion_matrix.th_0_55.AP", "confusion_matrix.th_0_6.AP", "confusion_matrix.th_0_65.AP", "confusion_matrix.th_0_7.AP", "confusion_matrix.th_0_75.AP", "confusion_matrix.th_0_8.AP", "confusion_matrix.th_0_85.AP", "confusion_matrix.th_0_9.AP", "confusion_matrix.th_0_95.AP",]
+summary = [ "confusion_matrix.avAP", "confusion_matrix.th_0_1.AP", "confusion_matrix.th_0_2.AP", "confusion_matrix.th_0_3.AP", "confusion_matrix.th_0_4.AP", "confusion_matrix.th_0_5.AP", "confusion_matrix.th_0_6.AP", "confusion_matrix.th_0_7.AP", "confusion_matrix.th_0_8.AP", "confusion_matrix.th_0_9.AP",]
 prediction_only = false
 
 [postprocessing]
@@ -158,17 +158,6 @@ remove_small_comps = 600
 
 [visualize]
 save_mip = true
-
-[evaluation.prediction]
-eval_fg_prediction = false
-eval_fg_thresholds = [ 0.2, 0.5, 0.8,]
-eval_patch_prediction = true
-eval_patch_thresholds = [ 0.85,]
-return_patches = true
-store_iou = true
-eval_prediction_output = false
-evaluate_skeleton_coverage = false
-remove_small_comps = [ 0,]
 
 [evaluation.prediction]
 eval_fg_prediction = false

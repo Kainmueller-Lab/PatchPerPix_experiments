@@ -121,7 +121,7 @@ metric = "confusion_matrix.th_0_5.AP"
 print_f_factor_perc_gt_0_8 = false
 use_linear_sum_assignment = true
 foreground_only = false
-summary = [ "confusion_matrix.avAP", "confusion_matrix.th_0_1.AP", "confusion_matrix.th_0_2.AP", "confusion_matrix.th_0_3.AP", "confusion_matrix.th_0_4.AP", "confusion_matrix.th_0_5.AP", "confusion_matrix.th_0_55.AP", "confusion_matrix.th_0_6.AP", "confusion_matrix.th_0_65.AP", "confusion_matrix.th_0_7.AP", "confusion_matrix.th_0_75.AP", "confusion_matrix.th_0_8.AP", "confusion_matrix.th_0_85.AP", "confusion_matrix.th_0_9.AP", "confusion_matrix.th_0_95.AP",]
+summary = [ "confusion_matrix.avAP", "confusion_matrix.th_0_1.AP", "confusion_matrix.th_0_2.AP", "confusion_matrix.th_0_3.AP", "confusion_matrix.th_0_4.AP", "confusion_matrix.th_0_5.AP", "confusion_matrix.th_0_6.AP", "confusion_matrix.th_0_7.AP", "confusion_matrix.th_0_8.AP", "confusion_matrix.th_0_9.AP",]
 prediction_only = false
 
 [postprocessing]
