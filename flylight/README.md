@@ -6,7 +6,7 @@ The MCFO acquisitions of the Drosophila brain as published with [[1]](#1) are av
 ## Setups
 
 ### setup22
-This is the setup used to create the PatchPerPixMatch results. The trained model is available at tbd.
+This is the setup used to create the [PatchPerPixMatch](https://github.com/Kainmueller-Lab/PatchPerPixMatch) results. The trained model is available at tbd.
 
 ## References
 <a id="1">[1]</a>
