@@ -1,0 +1,156 @@
+[general]
+logging = 'INFO'
+debug = false
+overwrite = true
+
+[data]
+train_data = '/nrs/saalfeld/maisl/data/flylight_v3/train'
+val_data = '/nrs/saalfeld/maisl/data/flylight_v3/val'
+test_data = '/nrs/saalfeld/maisl/data/flylight_v3/test'
+voxel_size = [1, 1, 1]
+num_channels = 3
+input_format = 'zarr'
+gt_key = 'volumes/gt_rm_5'
+raw_key = 'volumes/raw'
+validate_on_train = false
+
+[model]
+train_net_name = 'train_net'
+test_net_name = 'test_net'
+train_input_shape = [140, 140, 140]
+test_input_shape = [180, 180, 180]
+patchshape = [7, 7, 7]
+patchstride = [ 1, 1, 1]
+num_fmaps = 20
+max_num_inst = 2
+fmap_inc_factors = [3, 3, 3]
+fmap_dec_factors = [1.2, 1.2, 1.2]
+downsample_factors = [[2,2,2], [2,2,2], [2,2,2]]
+activation = "relu"
+padding = "valid"
+kernel_size = 3
+num_repetitions = 2
+upsampling = "trans_conv"
+overlapping_inst = true
+regress_num_inst = false
+
+[optimizer]
+optimizer = 'Adam'
+lr = 0.0001
+
+[preprocessing]
+clipmax = 1500
+
+[training]
+batch_size = 1
+num_workers = 10
+cache_size = 60
+max_iterations = 400000
+checkpoints = 20000
+snapshots = 20000
+profiling = 20000
+probability_random = 0.2
+probability_fg = 0.4
+probability_overlap = 0.4
+probability_fuse = 0.5
+probability_hue = 0.5
+hue_max_change = 0.5
+
+[prediction]
+output_format = 'zarr'
+num_workers = 4
+cache_size = 40
+aff_key = "volumes/pred_affs"
+fg_key = 'volumes/pred_fg'
+numinst_key = "volumes/pred_numinst"
+mask_folder = "/nrs/saalfeld/maisl/ppp/setup16_191206/test/processed/400000"
+clean_mask = 600
+fg_thresh = 0.5
+overlap = [5, 5, 5]
+
+[validation]
+params = ["mws", "skeletonize_foreground", "patch_threshold", "fc_threshold", "fg_thresh_vi"]
+mws = [true]
+skeletonize_foreground = [true]
+patch_threshold = [0.5]
+fg_thresh_vi = [0.5]
+fc_threshold = [0.5]
+
+[testing]
+num_workers = 4
+
+[vote_instances]
+patch_threshold = 0.5
+fg_thresh_vi = 0.5
+fc_threshold = 0.5
+cuda = true
+blockwise = true
+blockwise_old_stitch_fn = false
+only_bb = true
+ignore_small_comps = 200
+num_parallel_samples = 1
+num_parallel_blocks = 4
+chunksize = [92, 92, 92]
+sampling = 1.0
+debug = false
+select_patches_for_sparse_data = true
+save_no_intermediates = true
+output_format = 'hdf'
+includeSinglePatchCCS = true
+sample = 1.0
+removeIntersection = true
+mws = true
+isbiHack = false
+return_intermediates = true 
+mask_fg_border = false
+graphToInst = false
+skipLookup = false
+skipConsensus = false
+skipRanking = false
+skipThinCover = false
+affinity_graph_voting = false
+affinity_graph_voting_selected = false
+termAfterThinCover = false
+add_suffix = false
+consensus_without_overlap = false
+one_instance_per_channel = false
+remove_small_comps = 0
+do_nms = false
+skeletonize_foreground = true
+prob_based_consensus = false
+
+[evaluation]
+num_workers = 1
+res_key = 'vote_instances'
+metric = '1200.average_coverage_gt'
+remove_small_comps = [1200]
+prediction_only = false
+eval_patch_prediction = false
+eval_numinst_prediction = false
+evaluate_skeleton_coverage = true
+show_tp = false
+save_postprocessed = false
+foreground_only = false
+summary = ["1200.num_gt_label",
+	"1200.num_pred_label",
+	"1200.tp",
+	"1200.average_coverage_tp",
+	"1200.average_coverage_gt",
+	"1200.num_correct_labels_09",
+	"1200.num_correct_labels_08",
+	"1200.fn",
+	"1200.fp",
+	"1200.merges",
+	"1200.splits",
+	"1200.precision",
+	"1200.recall",
+	"1200.f1",
+]
+
+[postprocessing]
+
+[postprocessing.watershed]
+output_format = "hdf"
+
+[visualize]
+save_mip = true
