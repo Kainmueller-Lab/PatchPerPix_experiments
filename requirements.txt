@@ -4,5 +4,6 @@ h5py
 absl-py
 dask
 natsort
+git+https://github.com/Kainmueller-Lab/funlib.learn.tensorflow
 git+https://github.com/Kainmueller-Lab/gunpowder.git@a53bb55edc2d28a1acb310971571984cf0771cab#egg=gunpowder
 git+https://github.com/maisli/neurolight.git@master#egg=neurolight

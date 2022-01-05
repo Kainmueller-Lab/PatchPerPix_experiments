@@ -3,12 +3,6 @@
 ## Example experiment scripts for PatchPerPix
 To use this instance segmentation method, first get and install the core code for [PatchPerPix](https://github.com/Kainmueller-Lab/PatchPerPix).
 
-## Disclaimer
-
-The readme will be extended in the near future.
-In the meanwhile, if you have questions regarding the code, on how to run it or run into problems, please open an issue!
-
-
 ## Organization
 - run_ppp.py:
   - master script to start the experiments
