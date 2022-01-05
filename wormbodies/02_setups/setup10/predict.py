@@ -46,6 +46,7 @@ def predict(**kwargs):
         with h5py.File(os.path.join(kwargs['data_folder'],
                                     kwargs['sample'] + ".hdf"), 'r') as f:
             shape = f[raw_key].shape[1:]
+            shape = [int(s) for s in shape]
     elif kwargs['input_format'] == "zarr":
         sourceNode = gp.ZarrSource
         f = zarr.open(os.path.join(kwargs['data_folder'],
