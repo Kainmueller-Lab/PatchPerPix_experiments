@@ -1,3 +1,4 @@
+import torch.multiprocessing as mp
 import os
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
@@ -5,11 +6,6 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 os.environ["NUMEXPR_MAX_THREADS"] = "1"
-
-# os.environ['TF_AUTO_MIXED_PRECISION_GRAPH_REWRITE_WHITELIST_ADD'] = 'Conv3D,Conv3DBackpropFilter,Conv3DBackpropFilterV2,Conv3DBackpropInput,Conv3DBackpropInputV2,Conv2D,Conv2DBackpropFilter,Conv2DBackpropFilterV2,Conv2DBackpropInput,Conv2DBackpropInputV2'
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '0'
-# os.environ['TF_CPP_VMODULE'] = 'amp_optimizer=2'
-# os.environ['TF_ENABLE_AUTO_MIXED_PRECISION'] = '1'
 
 import argparse
 from copy import deepcopy
@@ -28,7 +24,6 @@ try:
     absl.logging._warn_preinit_stderr = False
 except Exception as e:
     print(e)
-import multiprocessing
 import operator
 import os
 import queue
@@ -45,6 +40,7 @@ from natsort import natsorted
 import numpy as np
 import toml
 import json
+from git import Repo
 
 from PatchPerPix import util
 from PatchPerPix.evaluate import evaluate_patch, evaluate_numinst, evaluate_fg
@@ -116,7 +112,7 @@ def fork(func):
     def wrapper(*args, **kwargs):
         try:
             logger.info("forking %s", func)
-            p = multiprocessing.Process(target=func, args=args, kwargs=kwargs)
+            p = mp.Process(target=func, args=args, kwargs=kwargs)
             p.start()
             p.join()
             if p.exitcode != 0:
@@ -135,9 +131,9 @@ def fork_return(func):
     def wrapper(*args, **kwargs):
         try:
             logger.info("forking %s", func)
-            q = multiprocessing.Queue()
-            p = multiprocessing.Process(target=func,
-                                        args=args + (q,), kwargs=kwargs)
+            q = mp.Queue()
+            p = mp.Process(target=func,
+                           args=args + (q,), kwargs=kwargs)
             p.start()
             results = None
             while p.is_alive():
@@ -178,6 +174,8 @@ def get_arguments():
                         help='Setup for experiment.', required=True)
     parser.add_argument('-id', '--exp-id', dest='expid', default=None,
                         help='ID for experiment.')
+    parser.add_argument('--comment', default=None,
+                        help='Note that will be printed in log')
 
     # action options
     parser.add_argument('-d', '--do', dest='do', default=[], nargs='+',
@@ -211,6 +209,9 @@ def get_arguments():
                         help='run from setup or from experiment folder')
     parser.add_argument("--validate_on_train", action="store_true",
                         help=('validate using training data'
+                              '(to check for overfitting)'))
+    parser.add_argument("--test_on_train", action="store_true",
+                        help=('test using training data'
                               '(to check for overfitting)'))
 
     # train / val / test datasets
@@ -250,8 +251,21 @@ def get_arguments():
     parser.add_argument("--skip_predict", action="store_true",
                         help=('skip prediction'
                               'e.g. during validate_checkpoints.'))
+    parser.add_argument("--only_predict_decode", action="store_true",
+                        help=('only prediction and decode'
+                              'e.g. during validate_checkpoints.'))
+    parser.add_argument("--skip_evaluate", action="store_true",
+                        help=('skip evaluation'))
+    parser.add_argument("--add_partly_val", action="store_true",
+                        help=('add partly labeled data to validation set'))
     parser.add_argument('--val_id', default=-1, type=int,
                         help='id of val params to process')
+    parser.add_argument("--batched", action="store_true",
+                        help='train with batch size > 1')
+    parser.add_argument("--no_gp_predict", action="store_true",
+                        help='predict without gunpowder')
+    parser.add_argument("--predict_monai", action="store_true",
+                        help='predict with monai (overlap+blend)')
 
     args = parser.parse_args()
 
@@ -267,7 +281,23 @@ def create_folders(args, filebase):
         backup_and_copy_file(setup, filebase, 'train.py')
         backup_and_copy_file(setup, filebase, 'mknet.py')
         try:
+            backup_and_copy_file(setup, filebase, 'torch_loss.py')
+        except FileNotFoundError:
+            pass
+        try:
+            backup_and_copy_file(setup, filebase, 'torch_model.py')
+        except FileNotFoundError:
+            pass
+        try:
             backup_and_copy_file(setup, filebase, 'predict.py')
+        except FileNotFoundError:
+            pass
+        try:
+            backup_and_copy_file(setup, filebase, 'predict_no_gp.py')
+        except FileNotFoundError:
+            pass
+        try:
+            backup_and_copy_file(setup, filebase, 'predict_monai.py')
         except FileNotFoundError:
             pass
         try:
@@ -285,28 +315,22 @@ def create_folders(args, filebase):
     os.makedirs(os.path.join(train_folder, 'snapshots'), exist_ok=True)
 
     # create val folders
-    val_folder = os.path.join(filebase, 'val')
-    os.makedirs(val_folder, exist_ok=True)
-    if args.app != 'flylight':
-        os.makedirs(os.path.join(val_folder, 'processed'), exist_ok=True)
-        os.makedirs(os.path.join(val_folder, 'instanced'), exist_ok=True)
+    if args.validate_on_train:
+        val_folder = os.path.join(filebase, 'val_train')
     else:
-        val_checkpoint_folder = os.path.join(val_folder, str(args.checkpoint))
-        os.makedirs(val_checkpoint_folder, exist_ok=True)
-        os.makedirs(os.path.join(val_checkpoint_folder, 'processed'), exist_ok=True)
-        os.makedirs(os.path.join(val_checkpoint_folder, 'instanced'), exist_ok=True)
+        val_folder = os.path.join(filebase, 'val')
+    os.makedirs(val_folder, exist_ok=True)
+    os.makedirs(os.path.join(val_folder, 'processed'), exist_ok=True)
+    os.makedirs(os.path.join(val_folder, 'instanced'), exist_ok=True)
 
     # create test folders
-    test_folder = os.path.join(filebase, 'test')
-    os.makedirs(test_folder, exist_ok=True)
-    if args.app != 'flylight':
-        os.makedirs(os.path.join(test_folder, 'processed'), exist_ok=True)
-        os.makedirs(os.path.join(test_folder, 'instanced'), exist_ok=True)
+    if args.test_on_train:
+        test_folder = os.path.join(filebase, 'test_train')
     else:
-        test_checkpoint_folder = os.path.join(test_folder, str(args.checkpoint))
-        os.makedirs(test_checkpoint_folder, exist_ok=True)
-        os.makedirs(os.path.join(test_checkpoint_folder, 'processed'), exist_ok=True)
-        os.makedirs(os.path.join(test_checkpoint_folder, 'instanced'), exist_ok=True)
+        test_folder = os.path.join(filebase, 'test')
+    os.makedirs(test_folder, exist_ok=True)
+    os.makedirs(os.path.join(test_folder, 'processed'), exist_ok=True)
+    os.makedirs(os.path.join(test_folder, 'instanced'), exist_ok=True)
 
     return train_folder, val_folder, test_folder
 
@@ -328,8 +352,15 @@ def update_config(args, config):
 
     if args.validate_on_train:
         config['data']['validate_on_train'] = True
+        config['data']['val_data'] = config['data']['train_data']
     else:
         config['data']['validate_on_train'] = False
+
+    if args.test_on_train:
+        config['data']['test_on_train'] = True
+        config['data']['test_data'] = config['data']['train_data']
+    else:
+        config['data']['test_on_train'] = False
 
     if args.vote_instances_cuda:
         config['vote_instances']['cuda'] = True
@@ -353,18 +384,25 @@ def mknet(args, config, train_folder, test_folder):
     if args.run_from_exp:
         mk_net_fn = runpy.run_path(
             os.path.join(config['base'], 'mknet.py'))['mk_net']
+        mk_net_fn_train = mk_net_fn
     else:
         mk_net_fn = importlib.import_module(
             args.app + '.02_setups.' + args.setup + '.mknet').mk_net
+        if args.batched:
+            mk_net_fn_train = importlib.import_module(
+                args.app + '.02_setups.' + args.setup + '.mknet_bs').mk_net
+        else:
+            mk_net_fn_train = mk_net_fn
 
-    mk_net_fn(name=config['model']['train_net_name'],
-              input_shape=config['model']['train_input_shape'],
-              output_folder=train_folder,
-              autoencoder=config.get('autoencoder'),
-              **config['data'],
-              **config['model'],
-              **config['optimizer'],
-              debug=config['general']['debug'])
+    mk_net_fn_train(name=config['model']['train_net_name'],
+                    input_shape=config['model']['train_input_shape'],
+                    output_folder=train_folder,
+                    autoencoder=config.get('autoencoder'),
+                    **config['data'],
+                    **config['model'],
+                    **config['optimizer'],
+                    batch_size=config['training']['batch_size'],
+                    debug=config['general']['debug'])
     mk_net_fn(name=config['model']['test_net_name'],
               input_shape=config['model']['test_input_shape'],
               output_folder=test_folder,
@@ -372,19 +410,24 @@ def mknet(args, config, train_folder, test_folder):
               **config['data'],
               **config['model'],
               **config['optimizer'],
+              batch_size=config['training']['batch_size'],
               debug=config['general']['debug'])
 
 
-@fork
+# @fork
 @time_func
 def train(args, config, train_folder):
     if 'CUDA_VISIBLE_DEVICES' not in os.environ:
         raise RuntimeError("no free GPU available!")
 
     data_files = get_list_train_files(config)
+    val_files = get_list_train_files(config, val=True)
     if args.run_from_exp:
         train_fn = runpy.run_path(
             os.path.join(config['base'], 'train.py'))['train_until']
+    elif args.batched:
+        train_fn = importlib.import_module(
+            args.app + '.02_setups.' + args.setup + '.train_bs').train_until
     else:
         train_fn = importlib.import_module(
             args.app + '.02_setups.' + args.setup + '.train').train_until
@@ -393,6 +436,7 @@ def train(args, config, train_folder):
              max_iteration=config['training']['max_iterations'],
              output_folder=train_folder,
              data_files=data_files,
+             val_files=val_files,
              **config['data'],
              **config['model'],
              **config['training'],
@@ -400,8 +444,11 @@ def train(args, config, train_folder):
              **config.get('preprocessing', {}))
 
 
-def get_list_train_files(config):
-    data = config['data']['train_data']
+def get_list_train_files(config, val=False):
+    if val:
+        data = config['data']['val_data']
+    else:
+        data = config['data']['train_data']
     if os.path.isfile(data):
         files = [data]
     elif os.path.isdir(data):
@@ -534,18 +581,63 @@ def predict_autoencoder(args, config, data, checkpoint, train_folder,
                     **config['visualize'])
 
 
+@fork
+@time_func
+def predict_no_gp(args, config, name, data, samples, checkpoint, input_folder,
+                  output_folder):
+    if 'CUDA_VISIBLE_DEVICES' not in os.environ:
+        raise RuntimeError("no free GPU available!")
+
+    logger.info('predicting!')
+
+    if args.no_gp_predict:
+        if args.run_from_exp:
+            predict_fn = runpy.run_path(
+                os.path.join(config['base'], 'predict_no_gp.py'))['predict']
+        else:
+            predict_fn = importlib.import_module(
+                args.app + '.02_setups.' + args.setup + '.predict_no_gp').predict
+    else:
+        if args.run_from_exp:
+            predict_fn = runpy.run_path(
+                os.path.join(config['base'], 'predict_monai.py'))['predict']
+        else:
+            predict_fn = importlib.import_module(
+                args.app + '.02_setups.' + args.setup + '.predict_monai').predict
+    predict_fn(name=name, samples=samples, checkpoint=checkpoint,
+               data_folder=data, input_folder=input_folder,
+               output_folder=output_folder,
+               **config['data'],
+               **config['model'],
+               batch_size=config['training']['batch_size'],
+               **config.get('preprocessing', {}),
+               **config['prediction'])
+
+
 @time_func
 def predict(args, config, name, data, checkpoint, test_folder, output_folder):
-    samples = get_list_samples(config, data, config['data']['input_format'])
+    if data.endswith("npy"):
+        samples = [data]
+    else:
+        samples = get_list_samples(config, data, config['data']['input_format'])
+        if config["data"].get("add_partly_val", False):
+            samples += get_list_samples(
+                    config, data.replace("complete", "partly"),
+                    config["data"]["input_format"]
+                    )
 
     if args.sample is not None:
         samples = [s for s in samples if args.sample in s]
 
+    samplesT = []
     for idx, sample in enumerate(samples):
         fl = os.path.join(output_folder,
                           sample + '.' + config['prediction']['output_format'])
         if not config['general']['overwrite'] and os.path.exists(fl):
-            key = 'aff_key' if not config['training'].get('train_code') else 'code_key'
+            key = ('aff_key'
+                   if not (config['training'].get('train_code') or
+                           config['model'].get('train_code'))
+                   else 'code_key')
             if check_file(
                     fl, remove_on_error=False,
                     key=config['prediction'].get(key, "volumes/pred_affs")):
@@ -558,7 +650,15 @@ def predict(args, config, name, data, checkpoint, test_folder, output_folder):
             else:
                 logger.info('prediction %s broken. recomputing..!',
                             sample)
+        samplesT.append(sample)
+    samples = samplesT
 
+    if (args.no_gp_predict or args.predict_monai) and samples:
+        predict_no_gp(args, config, name, data, samples, checkpoint,
+                      test_folder, output_folder)
+        return
+
+    for idx, sample in enumerate(samples):
         print("predicting with output %s" % os.path.join(
                 output_folder,
                 sample + '.' + config['prediction']['output_format']))
@@ -575,7 +675,8 @@ def predict(args, config, name, data, checkpoint, test_folder, output_folder):
 @time_func
 def decode(args, config, data, checkpoint, pred_folder, output_folder):
     in_format = config['prediction']['output_format']
-    samples = get_list_samples(config, pred_folder, in_format, data)
+    # samples = get_list_samples(config, pred_folder, in_format, data)
+    samples = get_list_samples(config, pred_folder, in_format)
 
     if args.sample is not None:
         samples = [s for s in samples if args.sample in s]
@@ -594,9 +695,18 @@ def decode(args, config, data, checkpoint, pred_folder, output_folder):
     if len(samples) == 0:
         return
 
+    logger.info("Decoding still to be done for: %s", samples)
+
     if 'CUDA_VISIBLE_DEVICES' not in os.environ:
         raise RuntimeError("no free GPU available!")
-    import tensorflow as tf
+    try:
+        import tensorflow as tf
+        mode = tf.estimator.ModeKeys.PREDICT
+    except:
+        logger.info(
+            "unable to \"import tensorflow\" in def decode, "
+            "this is ok as long as pytorch is used anyway.")
+        mode = None
     for idx, s in enumerate(samples):
         samples[idx] = os.path.join(pred_folder, s + "." + in_format)
 
@@ -613,7 +723,7 @@ def decode(args, config, data, checkpoint, pred_folder, output_folder):
         input_shape = None
 
     decode_fn(
-        mode=tf.estimator.ModeKeys.PREDICT,
+        mode=mode,
         input_shape=input_shape,
         checkpoint_file=checkpoint,
         output_folder=output_folder,
@@ -622,7 +732,9 @@ def decode(args, config, data, checkpoint, pred_folder, output_folder):
         **config['model'],
         **config['prediction'],
         **config['visualize'],
-        **config['data']
+        **config['data'],
+        batch_size=config['training']['batch_size'],
+        num_parallel_samples=config['vote_instances']['num_parallel_samples']
     )
 
 
@@ -661,20 +773,15 @@ def validate_checkpoint(args, config, data, checkpoint, params, train_folder,
     logger.info("validating checkpoint %d %s", checkpoint, params)
 
     # create test iteration folders
-    params_str = [k + "_" + str(v).replace(".", "_")
+    params_str = [k + "_" + str(v).replace(".", "_").replace(
+        " ", "").replace(",", "_").replace("[", "_").replace(
+            "]", "_").replace("(", "_").replace(")", "_")
                   for k, v in params.items()]
-    if args.app != 'flylight':
-        pred_folder = os.path.join(output_folder, 'processed', str(checkpoint))
-        inst_folder = os.path.join(output_folder, 'instanced', str(checkpoint),
-                                   *params_str)
-        eval_folder = os.path.join(output_folder, 'evaluated', str(checkpoint),
-                                   *params_str)
-    else:
-        pred_folder = os.path.join(output_folder, str(checkpoint), 'processed')
-        inst_folder = os.path.join(output_folder, str(checkpoint), 'instanced',
-                                   *params_str)
-        eval_folder = os.path.join(output_folder, str(checkpoint), 'evaluated',
-                                   *params_str)
+    pred_folder = os.path.join(output_folder, 'processed', str(checkpoint))
+    inst_folder = os.path.join(output_folder, 'instanced', str(checkpoint),
+                               *params_str)
+    eval_folder = os.path.join(output_folder, 'evaluated', str(checkpoint),
+                               *params_str)
 
     os.makedirs(pred_folder, exist_ok=True)
     os.makedirs(inst_folder, exist_ok=True)
@@ -699,17 +806,18 @@ def validate_checkpoint(args, config, data, checkpoint, params, train_folder,
                 checkpoint_file, test_folder, pred_folder)
 
     # if ppp learns code
-    if config['training'].get('train_code'):
+    if config['training'].get('train_code') or \
+       config['model'].get('train_code'):
         autoencoder_chkpt = config['model']['autoencoder_chkpt']
         if autoencoder_chkpt == "this":
             autoencoder_chkpt = checkpoint_file
         decode(args, config, data, autoencoder_chkpt, pred_folder, pred_folder)
 
+    if args.only_predict_decode:
+        return None
+
     if config['evaluation'].get('prediction_only'):
-        if args.app != 'flylight':
-            eval_folder = os.path.join(output_folder, "evaluated", str(checkpoint))
-        else:
-            eval_folder = os.path.join(output_folder, str(checkpoint), "evaluated")
+        eval_folder = os.path.join(output_folder, "evaluated", str(checkpoint))
         logger.info("evaluating prediction checkpoint %d", checkpoint)
         return evaluate_prediction(
             args, config, data, pred_folder, eval_folder)
@@ -721,11 +829,13 @@ def validate_checkpoint(args, config, data, checkpoint, params, train_folder,
         exit(0)
 
     # evaluate
-    logger.info("evaluating checkpoint %d %s", checkpoint, params)
-    metric = evaluate(args, config, data, inst_folder, eval_folder)
-    logger.info("%s checkpoint %6d: %.4f (%s)",
-                config['evaluation']['metric'], checkpoint, metric, params)
-
+    if not args.skip_evaluate:
+        logger.info("evaluating checkpoint %d %s", checkpoint, params)
+        metric = evaluate(args, config, data, inst_folder, eval_folder)
+        logger.info("%s checkpoint %6d: " + ("%s" if isinstance(metric, dict) else "%.4f") + " (%s)",
+                    config['evaluation']['metric'], checkpoint, metric, params)
+    else:
+        metric = None
     return metric
 
 
@@ -829,20 +939,18 @@ def validate_checkpoints(args, config, data, checkpoints, train_folder,
     for checkpoint in checkpoints:
         logger.info("validating checkpoint %s", checkpoint)
         for idx, param_set in enumerate(param_sets):
-            if param_set["patch_threshold"] == param_set["fg_thresh_vi"]:
-                continue
             if args.val_id >= 0 and args.val_id != idx:
                 continue
-            # if args.val_id >= 0 and checkpoint != 300000:
-            #     continue
             val_config = deepcopy(config)
             for k in param_set.keys():
                 val_config['vote_instances'][k] = param_set[k]
 
             if 'filterSzs' in config['validation']:
                 filterSzs = config['validation']['filterSzs']
-            else:
+            elif 'filterSz' in config['evaluation']:
                 filterSzs = [config['evaluation']['filterSz']]
+            else:
+                filterSzs = [None]
 
             if 'res_keys' in config['validation']:
                 res_keys = config['validation']['res_keys']
@@ -868,14 +976,24 @@ def validate_checkpoints(args, config, data, checkpoints, train_folder,
                 results.append({'checkpoint': checkpoint,
                                 'metric': str(metric),
                                 'params': tmp_param_set})
-                logger.info("%s checkpoint %6d: %.4f (%s)",
-                            config['evaluation']['metric'],
-                            checkpoint, metric, tmp_param_set)
+                if metric is None:
+                    continue
+                logger.info("%s checkpoint %6d: " +
+                            ("%s" if isinstance(metric, dict) else "%.4f") +
+                            " (%s)",
+                            config['evaluation']['metric'], checkpoint,
+                            metric, tmp_param_set)
 
+    if args.only_predict_decode:
+        return None, None
+
+    if val_config['evaluation'].get('prediction_only'):
+        config['evaluation']['metric'] = '1_f1'
 
     for ch, metric, p in zip(ckpts, metrics, params):
-        logger.info("%s checkpoint %6d: %.4f (%s)",
-                    config['evaluation']['metric'], ch, metric, p)
+        logger.info("%s checkpoint %6d: " +
+                    ("%s" if isinstance(metric, dict) else "%.4f") + " (%s)",
+                    config['evaluation']['metric'], ch, np.mean(metric), p)
 
     if config['general']['debug'] and None in metrics:
         logger.error("None in checkpoint found: %s (continuing with last)",
@@ -883,8 +1001,35 @@ def validate_checkpoints(args, config, data, checkpoints, train_folder,
         best_checkpoint = ckpts[-1]
         best_params = params[-1]
     else:
-        best_checkpoint = ckpts[np.argmax(metrics)]
-        best_params = params[np.argmax(metrics)]
+        if isinstance(metrics, list):
+            met = []
+            for ch, metric, p in zip(ckpts, metrics, params):
+                try:
+                    m = metric[config['evaluation']['metric']]
+                except:
+                    m = metric
+                logger.info(
+                    "%s checkpoint %6d: " +
+                    ("%s" if isinstance(metric, dict) else "%.4f") + " (%s)",
+                    config['evaluation']['metric'], ch,
+                    m, p)
+                met.append(np.mean(metric))
+            metrics = met
+            best_checkpoint = ckpts[np.argmax(metrics)]
+            best_params = params[np.argmax(metrics)]
+        elif isinstance(metrics, dict):
+            mm = 0
+            mmi = 0
+            for i, (c, p, m) in enumerate(zip(ckpts, params, metrics)):
+                if m["pq"] > mm:
+                    mm = m["pq"]
+                    mmi = i
+                print(c, p, m)
+            best_checkpoint = ckpts[i]
+            best_params = params[i]
+        else:
+            best_checkpoint = ckpts[np.argmax(metrics)]
+            best_params = params[np.argmax(metrics)]
     logger.info('best checkpoint: %d', best_checkpoint)
     logger.info('best params: %s', best_params)
     with open(os.path.join(output_folder, "results.json"), 'w') as f:
@@ -897,6 +1042,11 @@ def vote_instances(args, config, data, pred_folder, output_folder):
     samples = get_list_samples(config, pred_folder,
                                config['prediction']['output_format'],
                                data)
+    if config["data"].get("add_partly_val", False):
+        samples += get_list_samples(
+            config, pred_folder,
+            config["prediction"]["output_format"],
+            data.replace("complete", "partly"))
 
     if args.sample is not None:
         samples = [s for s in samples if args.sample in s]
@@ -909,15 +1059,16 @@ def vote_instances(args, config, data, pred_folder, output_folder):
             global mutex
             mutex = l
 
-        mutex = multiprocessing.Lock()
-        pool = multiprocessing.Pool(processes=num_workers,
-                                    initializer=init, initargs=(mutex,))
+        mutex = mp.Lock()
+        pool = mp.Pool(processes=num_workers,
+                       initializer=init, initargs=(mutex,))
         pool.map(functools.partial(vote_instances_sample, args, config,
                                    data, pred_folder, output_folder), samples)
         pool.close()
         pool.join()
     else:
-        for sample in samples:
+        for idx, sample in enumerate(samples):
+            print("labelling {}/{}: {}".format(idx, len(samples), sample))
             vote_instances_sample_seq(args, config, data, pred_folder,
                                       output_folder, sample)
             if args.predict_single:
@@ -991,14 +1142,14 @@ def vote_instances_sample(args, config, data, pred_folder, output_folder,
     if config['vote_instances']['cuda'] and \
        not config['vote_instances']['blockwise']:
         if config['vote_instances'].get("num_parallel_samples", 1) == 1:
-            config['vote_instances']['mutex'] = multiprocessing.Lock()
+            config['vote_instances']['mutex'] = mp.Lock()
         else:
             config['vote_instances']['mutex'] = mutex
 
     if config['vote_instances']['blockwise']:
         pred_file = os.path.join(
             pred_folder, sample + '.' + config['prediction']['output_format'])
-        if config['vote_instances']['blockwise_old_stitch_fn']:
+        if config['vote_instances'].get('blockwise_old_stitch_fn'):
             fn = vi.ref_vote_instances_blockwise.main
         else:
             fn = vi.stitch_patch_graph.main
@@ -1019,7 +1170,7 @@ def vote_instances_sample(args, config, data, pred_folder, output_folder,
         vi.vote_instances.main(
             **config['vote_instances'],
             **config['model'],
-            debug=config['general']['debug'],
+            numinst_key=config['prediction'].get('numinst_key'),
             aff_key=config['prediction'].get('aff_key'),
             fg_key=config['prediction'].get('fg_key'),
             )
@@ -1027,6 +1178,7 @@ def vote_instances_sample(args, config, data, pred_folder, output_folder,
 
 def evaluate_sample(config, args, data, sample, inst_folder, output_folder,
                     file_format):
+    partly = False
     if os.path.isfile(data):
         gt_path = data
         gt_key = sample + "/gt"
@@ -1036,7 +1188,14 @@ def evaluate_sample(config, args, data, sample, inst_folder, output_folder,
     else:
         gt_path = os.path.join(
             data, sample + "." + config['data']['input_format'])
+
+        if config["data"].get("add_partly_val", False) and os.path.exists(
+                gt_path.replace("complete", "partly")):
+            gt_path = gt_path.replace("complete", "partly")
+            partly = True
         gt_key = config['data']['gt_key']
+
+    partly = "partly" in gt_path
 
     sample_path = os.path.join(inst_folder, sample + "." + file_format)
     if config['vote_instances'].get('one_instance_per_channel'):
@@ -1044,6 +1203,9 @@ def evaluate_sample(config, args, data, sample, inst_folder, output_folder,
             gt_key = config['data'].get('one_instance_per_channel_gt')
             logger.info('call evaluation with key %s', gt_key)
 
+    logger.info("evaluating %s (partly? %s)", sample, partly)
+
+    # todo: take out extra evaluate skeleton coverage
     if config['evaluation'].get('evaluate_skeleton_coverage'):
         eval_skeleton_fn = importlib.import_module(
             args.app + '.03_evaluate.evaluate').evaluate_file
@@ -1056,6 +1218,7 @@ def evaluate_sample(config, args, data, sample, inst_folder, output_folder,
                                 show_tp=config['evaluation'].get('show_tp'),
                                 save_postprocessed=config['evaluation'].get(
                                     'save_postprocessed'),
+                                **config["data"]
                                 )
 
     else:
@@ -1064,12 +1227,24 @@ def evaluate_sample(config, args, data, sample, inst_folder, output_folder,
             gt_key=gt_key, out_dir=output_folder, suffix="",
             foreground_only=config['evaluation'].get('foreground_only', False),
             debug=config['general']['debug'],
+            from_scratch=config['evaluation'].get('from_scratch', False),
             overlapping_inst=config['vote_instances'].get(
                 'one_instance_per_channel', False),
             use_linear_sum_assignment=config['evaluation'].get(
                 'use_linear_sum_assignment', False),
             metric=config['evaluation'].get('metric', None),
             filterSz=config['evaluation'].get('filterSz', None),
+            localization_criterion=config['evaluation'].get("localization_criterion", "iou"),
+            remove_small_components=config['evaluation'].get("remove_small_components", None),
+            keep_gt_shape=config['evaluation'].get("keep_gt_shape", False),
+            partly=partly,
+            visualize=config["evaluation"].get("visualize", False),
+            visualize_type=config["evaluation"].get("visualize_type", "nuclei"),
+            assignment_strategy=config["evaluation"].get("assignment_strategy", "hungarian"),
+            evaluate_false_labels=config["evaluation"].get("evaluate_false_labels", False),
+            unique_false_labels=config["evaluation"].get("unique_false_labels", False),
+            add_general_metrics=config["evaluation"].get("add_general_metrics", []),
+            add_multi_thresh_metrics=config["evaluation"].get("add_multi_thresh_metrics", [])
     )
 
 
@@ -1128,7 +1303,8 @@ def evaluate_prediction_sample(args, config, sample, data, pred_folder,
             **config['evaluation']['prediction'],
             **config['model'],
             **config['prediction'],
-            **config['data']
+            **config['data'],
+            numinst_threshs=config['vote_instances'].get("numinst_threshs")
         )
         metric.update(numinst_metric)
 
@@ -1145,16 +1321,6 @@ def evaluate_prediction_sample(args, config, sample, data, pred_folder,
         metric.update(fg_metric)
 
     if config['evaluation']['prediction'].get('eval_patch_prediction'):
-        # skipping = True
-        # for th in config['evaluation']['prediction']['eval_patch_thresholds']:
-        #     thresh_key = str(round(th, 2)).replace('.', '_')
-        #     iou_key = "volumes/{}/IOU".format(thresh_key)
-        #     if not check_file(pred_fn, remove_on_error=False, key=iou_key):
-        #         skipping = False
-        # if skipping:
-        #     logger.info('Skipping eval prediction for %s. Already exists!',
-        #                 sample)
-        #     return
         patch_metric = evaluate_patch(
             pred_fn, label_fn,
             sample_gt_key=sample_gt_key,
@@ -1164,7 +1330,7 @@ def evaluate_prediction_sample(args, config, sample, data, pred_folder,
             **config['data']
         )
         metric.update(patch_metric)
-        if config['evaluation']['prediction']['store_iou']:
+        if config['evaluation']['prediction'].get('store_iou'):
             if file_format == "zarr":
                 outfl = zarr.open(pred_fn, 'a')
             elif file_format == "hdf":
@@ -1189,7 +1355,10 @@ def evaluate_prediction_sample(args, config, sample, data, pred_folder,
 
 def evaluate_prediction(args, config, data, pred_folder, output_folder):
     file_format = config['prediction']['output_format']
-    samples = natsorted(get_list_samples(config, pred_folder, file_format))
+    samples = natsorted(get_list_samples(config, pred_folder, file_format, data))
+
+    if args.sample is not None:
+        samples = [s for s in samples if args.sample in s]
 
     num_workers = config['evaluation'].get("num_workers", 1)
     if num_workers > 1:
@@ -1260,10 +1429,25 @@ def evaluate_prediction(args, config, data, pred_folder, output_folder):
 @time_func
 def evaluate(args, config, data, inst_folder, output_folder, return_avg=True):
     file_format = config['postprocessing']['watershed']['output_format']
-    samples = natsorted(get_list_samples(config, inst_folder, file_format, data))
+    add_partly = config["data"].get("add_partly_val", False)
+    if add_partly:
+        samples = natsorted(get_list_samples(config, inst_folder, file_format))
+        samples_complete = get_list_samples(config, data, config['data']['input_format'])
+        complete = np.isin(samples, samples_complete)
+    else:
+        samples = natsorted(get_list_samples(config, inst_folder, file_format, data))
+        complete = np.ones(len(samples), dtype=bool)
 
     if args.sample is not None:
         samples = [s for s in samples if args.sample in s]
+
+    if args.app == "conic":
+        eval_fn = importlib.import_module(
+            args.app + '.02_setups.' + args.setup + '.eval').work
+        metrics = eval_fn("seg_class", inst_folder, data)
+        with open(os.path.join(output_folder, "eval.toml"), 'w') as f:
+            toml.dump(metrics, f)
+        return metrics
 
     num_workers = config['evaluation'].get("num_workers", 1)
     if num_workers > 1:
@@ -1284,28 +1468,47 @@ def evaluate(args, config, data, inst_folder, output_folder, return_avg=True):
 
     metrics = {}
     metrics_full = {}
+    metrics_full_partly = {}
     num_gt = 0
     num_fscore = 0
-    for metric_dict, sample in zip(metric_dicts, samples):
+    for metric_dict, sample, cplt in zip(metric_dicts, samples, complete):
         if metric_dict is None:
             continue
+        # TODO: handle partly separately?
+
         metrics_full[sample] = metric_dict
         if config['evaluation'].get('print_f_factor_perc_gt_0_8', False):
             num_gt += int(metric_dict['general']['Num GT'])
             num_fscore += int(
                 metric_dict['confusion_matrix']['th_0_5']['Fscore_cnt'])
+        # report main metric to compare different runs with each other
+        # todo: should that also be possible for partly labeled data?
         for k in config['evaluation']['metric'].split('.'):
             metric_dict = metric_dict[k]
         logger.info("%s sample %-19s: %.4f",
                     config['evaluation']['metric'], sample, float(metric_dict))
         metrics[sample] = float(metric_dict)
 
+    if add_partly and 'summary' in config['evaluation'].keys():
+        summarize_metric_dict(
+            metric_dicts, samples,
+            config['evaluation']['summary'],
+            os.path.join(output_folder, 'summary_combined.csv')
+        )
+
     if 'summary' in config['evaluation'].keys():
         summarize_metric_dict(
-            metric_dicts,
-            samples,
+            [metric_dict for metric_dict, cplt in zip(metric_dicts, complete) if cplt],
+            [s for s, cplt in zip(samples, complete) if cplt],
             config['evaluation']['summary'],
-            os.path.join(output_folder, 'summary.csv')
+            os.path.join(output_folder, 'summary.csv' if "partly" not in data else 'summary_partly.csv')
+        )
+    if add_partly and "summary_partly" in config["evaluation"].keys():
+        summarize_metric_dict(
+            [metric_dict for metric_dict, cplt in zip(metric_dicts, complete) if not cplt],
+            [s for s, cplt in zip(samples, complete) if not cplt],
+            config['evaluation']['summary_partly'],
+            os.path.join(output_folder, 'summary_partly.csv')
         )
 
     if config['evaluation'].get('print_f_factor_perc_gt_0_8', False):
@@ -1346,8 +1549,10 @@ def visualize(args, config, pred_folder, inst_folder):
         )))
         print(param_sets)
         for param_set in param_sets:
-            params_str = [k + "_" + str(v).replace(".", "_")
-                          for k, v in param_set.items()]
+            params_str = [k + "_" + str(v).replace(".", "_").replace(
+                " ", "").replace(",", "_").replace("[", "_").replace(
+                    "]", "_").replace("(", "_").replace(")", "_")
+                          for k, v in params.items()]
             vis_config = deepcopy(config)
             for k in param_set.keys():
                 if "filterSz" in k or "res_key" in k:
@@ -1384,113 +1589,251 @@ def visualize(args, config, pred_folder, inst_folder):
                                             max_axis=max_axis)
 
 
-@time_func
-def cross_validate(args, config, data, train_folder, test_folder):
-    # data = config['data']['test_data']
-    num_variations = 0
-    # print(config['cross_validate'])
-    for k, v in config['cross_validate'].items():
-        if k == 'checkpoints':
-            continue
-        elif num_variations == 0:
-            num_variations = len(v)
-        else:
-            assert num_variations == len(v), \
-                'number of values for parameters has to be fixed'
-    for checkpoint in config['cross_validate']['checkpoints']:
-        if args.app != 'flylight':
-            pred_folder = os.path.join(test_folder, 'processed', str(checkpoint))
-        else:
-            pred_folder = os.path.join(test_folder, str(checkpoint), 'processed')
-        checkpoint_file = get_checkpoint_file(checkpoint,
-                                              config['model']['train_net_name'],
-                                              train_folder)
-        if not args.skip_predict:
-            predict(args, config, config['model']['test_net_name'], data,
-                    checkpoint_file, test_folder, pred_folder)
-        # if ppp learns code
-        if config['training'].get('train_code'):
-            autoencoder_chkpt = config['model']['autoencoder_chkpt']
-            if autoencoder_chkpt == "this":
-                autoencoder_chkpt = checkpoint_file
-            decode(args, config, data, autoencoder_chkpt, pred_folder,
-                   pred_folder)
+def average_flylight_score_over_instances(samples_foldn, result):
+    # heads up: hard coded for average F1 * average gt coverage
+    threshs = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9]
+    fscores = []
+    gt_covs = []
+    tp = {}
+    fp = {}
+    fn = {}
+    false_split = []
+    false_merge = []
+    for thresh in threshs:
+        tp[thresh] = []
+        fp[thresh] = []
+        fn[thresh] = []
+    for s in samples_foldn:
+        # todo: move type conversion to evaluate_file
+        gt_covs += list(np.array(
+            result[1][s]["general"]["gt_skel_coverage"], dtype=np.float32))
+        for thresh in threshs:
+            tp[thresh].append(result[1][s][
+                "confusion_matrix"]["th_" + str(thresh).replace(".","_")]["AP_TP"])
+            fp[thresh].append(result[1][s][
+                    "confusion_matrix"]["th_" + str(thresh).replace(".","_")]["AP_FP"])
+            fn[thresh].append(result[1][s][
+                    "confusion_matrix"]["th_" + str(thresh).replace(".","_")]["AP_FN"])
+            if thresh == 0.5:
+                false_split.append(result[1][s][
+                    "confusion_matrix"]["th_0_5"]["false_split"])
+                false_merge.append(result[1][s][
+                    "confusion_matrix"]["th_0_5"]["false_merge"])
+    for thresh in threshs:
+        fscores.append(2*np.sum(tp[thresh]) / (
+            2*np.sum(tp[thresh]) + np.sum(fp[thresh]) + np.sum(fn[thresh])))
+    avS = 0.5 * np.mean(fscores) + 0.5 * np.mean(gt_covs)
+    per_instance_counts = {}
+    per_instance_counts["gt_covs"] = gt_covs
+    per_instance_counts["false_split"] = np.sum(false_split)
+    per_instance_counts["false_merge"] = np.sum(false_merge)
+    per_instance_counts["tp"] = []
+    per_instance_counts["fp"] = []
+    per_instance_counts["fn"] = []
+    for thresh in threshs:
+        per_instance_counts["tp"].append(np.sum(tp[thresh]))
+        per_instance_counts["fp"].append(np.sum(fp[thresh]))
+        per_instance_counts["fn"].append(np.sum(fn[thresh]))
+    return avS, per_instance_counts
 
-    params = config['validation'].get('params', [])
+
+def average_flylight_score_with_instance_counts(results_fold1, results_fold2):
+    gt_covs = results_fold1["gt_covs"] + results_fold2["gt_covs"]
+    tps = np.array(results_fold1["tp"]) + np.array(results_fold2["tp"])
+    fps = np.array(results_fold1["fp"]) + np.array(results_fold2["fp"])
+    fns = np.array(results_fold1["fn"]) + np.array(results_fold2["fn"])
+    fscores = 2 * tps / (2 * tps + fps + fns)
+    avg_f1_cov_score = 0.5 * np.mean(gt_covs) + 0.5 * np.mean(fscores)
+    acc_both_folds = {}
+    acc_both_folds["avg_f1_cov_score"] = avg_f1_cov_score
+    acc_both_folds["avg_gt_skel_coverage"] = np.mean(gt_covs)
+    acc_both_folds["fscores"] = fscores
+    acc_both_folds["avFscore"] = np.mean(fscores)
+    acc_both_folds["false_split"] = results_fold1["false_split"] + results_fold2["false_split"]
+    acc_both_folds["false_merge"] = results_fold1["false_merge"] + results_fold2["false_merge"]
+    return avg_f1_cov_score, acc_both_folds
+
+
+@time_func
+def cross_validate(args, config, data, checkpoints, train_folder, test_folder):
+    # do cross validation either on all samples in one folder or two separate folders
+    if config["data"].get("cross_val_folders", None) is not None:
+        nfolds = []
+        for foldi in config["data"].get("cross_val_folders"):
+            nfolds.append(config["data"][foldi])
+        print(nfolds)
+    else:
+        nfolds = [data]
+    # run predict, vote instances and evaluate for all samples
+    param_sets = list(named_params(
+        *get_postprocessing_params(
+            config['validation'],
+            config['validation'].get(
+                'params_product',
+                config['validation'].get('params', [])),
+            config['validation'].get('params_zip', []),
+            config['vote_instances']
+        )))
+    logger.info("val params %s", param_sets)
+
+    for checkpoint in checkpoints:
+        logger.info("cross-validating checkpoint %s", checkpoint)
+        for foldi in nfolds:
+            logger.info("cross-validating fold %s", foldi)
+            pred_folder = os.path.join(test_folder, 'processed', str(checkpoint))
+            os.makedirs(pred_folder, exist_ok=True)
+            checkpoint_file = get_checkpoint_file(checkpoint,
+                                                  config['model']['train_net_name'],
+                                                  train_folder)
+            if not args.skip_predict:
+                predict(args, config, config['model']['test_net_name'], foldi,
+                        checkpoint_file, test_folder, pred_folder)
+            # if ppp learns code
+            if config['training'].get('train_code') or \
+               config['model'].get('train_code'):
+                autoencoder_chkpt = config['model']['autoencoder_chkpt']
+                if autoencoder_chkpt == "this":
+                    autoencoder_chkpt = checkpoint_file
+                decode(args, config, foldi, autoencoder_chkpt, pred_folder,
+                       pred_folder)
+
+    if args.only_predict_decode:
+        return
+
     results = {}
-    for checkpoint in config['cross_validate']['checkpoints']:
-        for i in range(num_variations):
-            param_set = {}
-            for p in params:
-                param_set[p] = config['cross_validate'][p][i] \
-                               if p in config['cross_validate'] \
-                                  else config['vote_instances'][p]
-            params_str = [k + "_" + str(v).replace(".", "_")
+    for checkpoint in checkpoints:
+        logger.info("cross-validating checkpoint %s", checkpoint)
+        for idx, param_set in enumerate(param_sets):
+            if args.val_id >= 0 and args.val_id != idx:
+                continue
+
+            params_str = [k + "_" + str(v).replace(".", "_").replace(
+                " ", "").replace(",", "_").replace("[", "_").replace(
+                    "]", "_").replace("(", "_").replace(")", "_")
                           for k, v in param_set.items()]
+            param_set = {
+                k:v if not isinstance(v, list) else tuple(v)
+                for k, v in param_set.items()}
             # change values in config
-            print(param_set)
+            print("params_set: ", param_set)
+            print("params_str:", params_str)
             val_config = deepcopy(config)
             for k in param_set.keys():
                 val_config['vote_instances'][k] = param_set[k]
-            if args.app != 'flylight':
-                pred_folder = os.path.join(test_folder,
-                                           'processed', str(checkpoint))
-                inst_folder = os.path.join(test_folder,
-                                           'instanced', str(checkpoint), *params_str)
-                eval_folder = os.path.join(test_folder,
-                                           'evaluated', str(checkpoint), *params_str)
-            else:
-                pred_folder = os.path.join(test_folder,
-                                           str(checkpoint), 'processed')
-                inst_folder = os.path.join(test_folder,
-                                           str(checkpoint), 'instanced', *params_str)
-                eval_folder = os.path.join(test_folder,
-                                           str(checkpoint), 'evaluated', *params_str)
+            inst_folder = os.path.join(
+                test_folder, 'instanced', str(checkpoint), *params_str)
+            eval_folder = os.path.join(
+                test_folder, 'evaluated', str(checkpoint), *params_str)
             os.makedirs(inst_folder, exist_ok=True)
             os.makedirs(eval_folder, exist_ok=True)
             logger.info("vote instances: %s", param_set)
-            print('call vi with ', pred_folder, inst_folder, param_set)
-            vote_instances(args, val_config, data, pred_folder, inst_folder)
-            metrics = evaluate(args, val_config, data, inst_folder, eval_folder,
-                               return_avg=False)
-            results[(checkpoint, *(param_set.values()))] = metrics
 
-    samples = natsorted(get_list_samples(config, data, config['data']['input_format']))
+            print('call vi with ', pred_folder, inst_folder, param_set)
+            for foldi in nfolds:
+                vote_instances(args, val_config, foldi, pred_folder, inst_folder)
+                metrics = evaluate(
+                    args, val_config, foldi, inst_folder, eval_folder,
+                    return_avg=False)
+                if (checkpoint, *(param_set.values())) not in results:
+                    results[(checkpoint, *(param_set.values()))] = metrics
+                else:
+                    results[(checkpoint, *(param_set.values()))][0].update(metrics[0])
+                    results[(checkpoint, *(param_set.values()))][1].update(metrics[1])
+
+    if args.sample is not None:
+        return
+
+    # perform two-fold cross validation on processed samples
+    if len(nfolds)==1:
+        samples = get_list_samples(config, data, config['data']['input_format'])
+    else:
+        samples_fold1 = get_list_samples(config, nfolds[0], config['data']['input_format'])
+        samples_fold2 = get_list_samples(config, nfolds[1], config['data']['input_format'])
+        samples = samples_fold1 + samples_fold2
+    print(samples)
+    samples = natsorted(samples)
+    # check if there is a result for each sample
     for k, v in results.items():
         assert len(v[0]) == len(samples)
-        for s1, s2 in zip(v[0].keys(), samples):
+        for s1, s2 in zip(natsorted(v[0].keys()), samples):
             assert s1 == s2
-    random.Random(42).shuffle(samples)
-    samples_fold1 = set(samples[:len(samples)//2])
-    samples_fold2 = set(samples[len(samples)//2:])
+    # split samples of one set
+    if len(nfolds) == 1:
+        random.Random(42).shuffle(samples)
+        samples_fold1 = set(samples[:len(samples)//2])
+        samples_fold2 = set(samples[len(samples)//2:])
+        logger.info("Shuffling with random.Random(42).shuffle(samples)")
+        logger.info("Samples in fold 1: %s", sorted(samples_fold1))
+        logger.info("Samples in fold 2: %s", sorted(samples_fold2))
+    # or take samples from two folders
+    else:
+        samples_fold1 = set(samples_fold1)
+        samples_fold2 = set(samples_fold2)
+
+    # average results either over samples or instances for each setup
     results_fold1 = {}
     results_fold2 = {}
-    for setup, result in results.items():
-        acc = []
-        for s in samples_fold1:
-            acc.append(result[0][s])
-        acc = np.mean(acc)
-        results_fold1[setup] = acc
+    results_fold1_complete = {}
+    results_fold2_complete = {}
+    if config["evaluation"].get("average_over_samples", True) == True:
+        for setup, result in results.items():
+            acc = []
+            for s in samples_fold1:
+                acc.append(result[0][s])
+            acc = np.mean(acc)
+            results_fold1[setup] = acc
 
-        acc = []
-        for s in samples_fold2:
-            acc.append(result[0][s])
-        acc = np.mean(acc)
-        results_fold2[setup] = acc
+            acc = []
+            for s in samples_fold2:
+                acc.append(result[0][s])
+            acc = np.mean(acc)
+            results_fold2[setup] = acc
+    else:
+        if config["evaluation"].get("metric", None) == "general.avg_f1_cov_score":
+            for setup, result in results.items():
+                # average over instances for fold1
+                acc, acc_per_instance = average_flylight_score_over_instances(
+                        samples_fold1, result)
+                results_fold1[setup] = acc
+                results_fold1_complete[setup] = acc_per_instance.copy()
+                # average over instances for fold2
+                acc, acc_per_instance = average_flylight_score_over_instances(
+                        samples_fold2, result)
+                results_fold2[setup] = acc
+                results_fold2_complete[setup] = acc_per_instance.copy()
+        else:
+            raise NotImplementedError
+    for setup in results_fold1.keys():
+        acc, acc_all = average_flylight_score_with_instance_counts(
+            results_fold1_complete[setup],
+            results_fold2_complete[setup]
+        )
+        logger.info("%s VAL %s: %.4f",
+                    config['evaluation']['metric'], setup, acc)
 
+    # select best setup for each fold
     best_setup_fold1 = max(results_fold1.items(), key=operator.itemgetter(1))[0]
     best_setup_fold2 = max(results_fold2.items(), key=operator.itemgetter(1))[0]
 
-    acc_fold2 = []
-    for s in samples_fold2:
-        acc_fold2.append(results[best_setup_fold1][0][s])
-    acc_fold1 = []
-    for s in samples_fold1:
-        acc_fold1.append(results[best_setup_fold2][0][s])
+    # todo: check with Peter: why averaging again here?
+    if config["evaluation"].get("average_over_samples", True) == True:
+        acc_fold2 = []
+        for s in samples_fold2:
+            acc_fold2.append(results[best_setup_fold1][0][s])
+        acc_fold1 = []
+        for s in samples_fold1:
+            acc_fold1.append(results[best_setup_fold2][0][s])
 
-    acc = np.mean(acc_fold2 + acc_fold1)
-    acc_fold2 = np.mean(acc_fold2)
-    acc_fold1 = np.mean(acc_fold1)
+        acc = np.mean(acc_fold2 + acc_fold1)
+        acc_fold2 = np.mean(acc_fold2)
+        acc_fold1 = np.mean(acc_fold1)
+    else:
+        acc_fold1 = results_fold1[best_setup_fold2]
+        acc_fold2 = results_fold2[best_setup_fold1]
+        acc, acc_all = average_flylight_score_with_instance_counts(
+                results_fold1_complete[best_setup_fold2],
+                results_fold2_complete[best_setup_fold1]
+                )
 
     logger.info("%s CROSS: %.4f [%.4f (%s), %.4f (%s)]",
                 config['evaluation']['metric'], acc,
@@ -1501,38 +1844,57 @@ def cross_validate(args, config, data, train_folder, test_folder):
         acc_fold1, best_setup_fold2,
         acc_fold2, best_setup_fold1))
 
-    ap_ths = ["confusion_matrix.avAP",
-              "confusion_matrix.th_0_5.AP",
-              "confusion_matrix.th_0_6.AP",
-              "confusion_matrix.th_0_7.AP",
-              "confusion_matrix.th_0_8.AP",
-              "confusion_matrix.th_0_9.AP"
-              ]
-    for ap_th in ap_ths:
-        metrics = {}
-        # get AP's for fold1
-        metric_dicts = results[best_setup_fold2][1]
-        for sample, metric_dict in metric_dicts.items():
-            if sample not in samples_fold1:
-               continue
-            if metric_dict is None:
-                continue
-            for k in ap_th.split('.'):
-                metric_dict = metric_dict[k]
-            metrics[sample] = float(metric_dict)
+    if config["evaluation"].get("average_over_samples", True) == True:
+        ap_ths = ["confusion_matrix.avAP",
+                  "confusion_matrix.th_0_5.AP",
+                  "confusion_matrix.th_0_6.AP",
+                  "confusion_matrix.th_0_7.AP",
+                  "confusion_matrix.th_0_75.AP",
+                  "confusion_matrix.th_0_8.AP",
+                  "confusion_matrix.th_0_9.AP",
+                  "confusion_matrix.th_0_5.recall",
+                  "confusion_matrix.th_0_8.recall",
+                  ]
+        for ap_th in ap_ths:
+            metrics = {}
+            # get AP's for fold1
+            metric_dicts = results[best_setup_fold2][1]
+            for sample, metric_dict in metric_dicts.items():
+                if sample not in samples_fold1:
+                   continue
+                if metric_dict is None:
+                    continue
+                for k in ap_th.split('.'):
+                    metric_dict = metric_dict[k]
+                metrics[sample] = float(metric_dict)
 
-        # get AP's for fold2
-        metric_dicts = results[best_setup_fold1][1]
-        for sample, metric_dict in metric_dicts.items():
-            if sample not in samples_fold2:
-                continue
-            if metric_dict is None:
-                continue
-            for k in ap_th.split('.'):
-                metric_dict = metric_dict[k]
-            metrics[sample] = float(metric_dict)
-        metric = np.mean(list(metrics.values()))
-        print("%s: %.4f" % (ap_th, metric))
+            # get AP's for fold2
+            metric_dicts = results[best_setup_fold1][1]
+            for sample, metric_dict in metric_dicts.items():
+                if sample not in samples_fold2:
+                    continue
+                if metric_dict is None:
+                    continue
+                for k in ap_th.split('.'):
+                    metric_dict = metric_dict[k]
+                metrics[sample] = float(metric_dict)
+            metric = np.mean(list(metrics.values()))
+            logger.info("%s: %.4f", ap_th, metric)
+    else:
+        # write summary for cross validation result
+        out_folder = os.path.join(test_folder, 'evaluated')
+        # write cross validation params
+        cv_info = {}
+        cv_info["data"] = nfolds
+        cv_info["samples_fold1"] = samples_fold1
+        cv_info["samples_fold2"] = samples_fold2
+        cv_info["setups"] = list(results.keys())
+        cv_info["best_setup_fold1"] = best_setup_fold1
+        cv_info["best_setup_fold2"] = best_setup_fold2
+        cv_info["average_over_samples"] = config["evaluation"].get("average_over_samples", True)
+        toml_fn = open(os.path.join(out_folder, "cross_validate_info.toml"), "w")
+        toml.dump(cv_info, toml_fn)
+        print(acc_all)
 
 
 def main():
@@ -1553,7 +1915,7 @@ def main():
     else:
         base = os.path.join(args.root,
                             args.app + '_' + args.setup + '_' + \
-                            datetime.now().strftime('%y%m%d_%H%M%S'))
+                            datetime.now().strftime('%y%m%d_%H%M%S_%f'))
 
     # create folder structure for experiment
     if args.debug_args:
@@ -1568,19 +1930,40 @@ def main():
     try:
         config = {}
         for conf in args.config:
-            if not is_new_run:
-                if os.path.dirname(os.path.abspath(conf)) != \
-                   os.path.abspath(base):
-                    raise RuntimeError("overwriting config with external config file (%s - %s)", conf, base)
             config = merge_dicts(config, toml.load(conf))
     except:
         raise IOError('Could not read config file: {}! Please check!'.format(
             conf))
     config['base'] = base
+    os.makedirs(os.path.join(base, "backups"), exist_ok=True)
+
+    repo = Repo(os.getcwd())
+    diff = repo.git.diff("HEAD")
+    dttm = datetime.now().strftime('%y%m%d_%H%M%S')
+    if diff is not None:
+        with open(os.path.join(
+                base, "backups",
+                "ppp_exp_source_" + dttm +".diff"), "w"
+        ) as f:
+            f.write(diff)
+    if "private" in os.getcwd():
+        ppp_dir = os.path.join(os.getcwd(), "..", "PatchPerPix_private")
+    else:
+        ppp_dir = os.path.join(os.getcwd(), "..", "PatchPerPix")
+    if not os.path.isdir(ppp_dir):
+        ppp_dir = os.path.join(os.getcwd(), "..", "ppp")
+
+    repo = Repo(ppp_dir)
+    diff = repo.git.diff("HEAD")
+    if diff is not None:
+        with open(os.path.join(
+                base, "backups",
+                "ppp_source_" + dttm +".diff"), "w"
+        ) as f:
+            f.write(diff)
 
     # set logging level
     prefix = "" if args.sample is None else args.sample
-    # prefix += str(config['validation']['patch_threshold'][0])
     logging.basicConfig(
         level=config['general']['logging'],
         handlers=[
@@ -1588,6 +1971,9 @@ def main():
                                              prefix + "run.log"), mode='a'),
             logging.StreamHandler(sys.stdout)
         ])
+    if args.comment is not None:
+        logger.info("note: %s", args.comment)
+        print("note: ", args.comment)
     logger.info('attention: using config file %s', args.config)
 
     if "CUDA_VISIBLE_DEVICES" not in os.environ:
@@ -1608,11 +1994,23 @@ def main():
         logger.info("CUDA_VISIBILE_DEVICES already set, device {}".format(
             os.environ["CUDA_VISIBLE_DEVICES"]))
 
+    # hpc race condition temp fix
+    try:
+        os.path.isdir(config['data']['train_data'])
+    except:
+        pass
+
     # update config with command line values
     update_config(args, config)
     # backup_and_copy_file(None, base, 'config.toml')
-    with open(os.path.join(base, "config.toml"), 'w') as f:
-        toml.dump(config, f)
+    if is_new_run:
+        with open(os.path.join(
+                base, f"config_{dttm}.toml"), 'w') as f:
+            toml.dump(config, f)
+    else:
+        with open(os.path.join(
+                base, "backups", f"config_backup_{dttm}.toml"), 'w') as f:
+            toml.dump(config, f)
     if args.debug_args:
         setDebugValuesForConfig(config)
     logger.info('used config: %s', config)
@@ -1637,16 +2035,11 @@ def main():
                 str(checkpoint))
 
         elif args.test_checkpoint == 'last':
-            with open(os.path.join(train_folder, 'checkpoint')) as f:
-                d = dict(
-                    x.rstrip().replace('"', '').replace(':', '').split(None, 1)
-                    for x in f)
-            checkpoint_path = d['model_checkpoint_path']
-            try:
-                checkpoint = int(checkpoint_path.split('_')[-1])
-            except ValueError:
-                logger.error('Could not convert checkpoint to int.')
-                raise
+            checkpoint = util.get_latest_checkpoint(
+                os.path.join(
+                    train_folder, config['model']['train_net_name']))[1]
+            if checkpoint == 0:
+                checkpoint = None
 
         if checkpoint is None and \
            args.test_checkpoint != 'best' and \
@@ -1656,6 +2049,13 @@ def main():
                 'Please provide a checkpoint (--checkpoint/--test-checkpoint)')
 
     params = None
+    if args.checkpoint is not None:
+        checkpoints = [int(args.checkpoint)]
+    elif config['validation'].get('checkpoints'):
+        checkpoints = config['validation']['checkpoints']
+    else:
+        checkpoints = get_checkpoint_list(config['model']['train_net_name'],
+                                          train_folder)
     # validation:
     # validate all checkpoints
     if ([do for do in args.do if do in ['all', 'predict', 'label',
@@ -1664,13 +2064,7 @@ def main():
         or 'validate_checkpoints' in args.do:
         data, output_folder = select_validation_data(config, train_folder,
                                                      val_folder)
-        if args.checkpoint is not None:
-            checkpoints = [int(args.checkpoint)]
-        elif config['validation'].get('checkpoints'):
-            checkpoints = config['validation']['checkpoints']
-        else:
-            checkpoints = get_checkpoint_list(config['model']['train_net_name'],
-                                              train_folder)
+
         logger.info("validating all checkpoints")
         checkpoint, params = validate_checkpoints(args, config, data,
                                                   checkpoints,
@@ -1715,21 +2109,15 @@ def main():
                 else:
                     config['vote_instances'][k] = params[k]
 
-        params_str = [k + "_" + str(v).replace(".", "_")
+        params_str = [k + "_" + str(v).replace(".", "_").replace(
+            " ", "").replace(",", "_").replace("[", "_").replace(
+                "]", "_").replace("(", "_").replace(")", "_")
                       for k, v in params.items()]
-        if args.app != 'flylight':
-            pred_folder = os.path.join(test_folder, 'processed', str(checkpoint))
-            inst_folder = os.path.join(test_folder, 'instanced', str(checkpoint),
-                                       *params_str)
-            eval_folder = os.path.join(test_folder, 'evaluated', str(checkpoint),
-                                       *params_str)
-        else:
-            pred_folder = os.path.join(test_folder, str(checkpoint), 'processed')
-            inst_folder = os.path.join(test_folder, str(checkpoint), 'instanced',
-                                       *params_str)
-            eval_folder = os.path.join(test_folder, str(checkpoint), 'evaluated',
-                                       *params_str)
-
+        pred_folder = os.path.join(test_folder, 'processed', str(checkpoint))
+        inst_folder = os.path.join(test_folder, 'instanced', str(checkpoint),
+                                   *params_str)
+        eval_folder = os.path.join(test_folder, 'evaluated', str(checkpoint),
+                                   *params_str)
 
     # predict test set
     if ('all' in args.do or 'predict' in args.do or 'infer' in args.do) and \
@@ -1748,12 +2136,15 @@ def main():
                     test_folder, pred_folder)
 
     if 'all' in args.do or 'decode' in args.do or 'infer' in args.do:
-        if config['training'].get('train_code'):
+        if config['training'].get('train_code') or \
+           config['model'].get('train_code'):
             autoencoder_chkpt = config['model'].get('autoencoder_chkpt')
             if autoencoder_chkpt == "this":
                 autoencoder_chkpt = checkpoint_file
             decode(args, config, config['data']['test_data'],
                    autoencoder_chkpt, pred_folder, pred_folder)
+        elif 'decode' in args.do:
+            raise RuntimeError("Asked to decode but train_code is not set!")
 
     if config['evaluation'].get('prediction_only_test'):
         logger.info("evaluating prediction checkpoint %d", checkpoint)
@@ -1766,6 +2157,17 @@ def main():
         logger.info("vote_instances checkpoint %d", checkpoint)
         vote_instances(args, config, config['data']['test_data'], pred_folder,
                        inst_folder)
+
+        if config['data']['test_data'].endswith("npy"):
+            samples = natsorted(os.listdir(inst_folder))
+            samples_data = []
+            for sample in samples:
+                print("loading", sample)
+                with h5py.File(os.path.join(inst_folder, sample)) as f:
+                    sample = np.array(f['vote_instances'])
+                    samples_data.append(sample)
+            samples_data = np.vstack(samples_data)
+            np.save("pred_inst_ppp.npy", samples_data)
 
     if 'all' in args.do or 'postprocess' in args.do:
         # remove small components should go here?
@@ -1809,24 +2211,22 @@ def main():
         else:
             metric = evaluate(args, config, config['data']['test_data'],
                               inst_folder, eval_folder)
-        logger.info("%s TEST checkpoint %d: %.4f (%s)",
+        logger.info("%s TEST checkpoint %d: " + ("%s" if isinstance(metric, dict) else "%.4f") + " (%s)",
                     config['evaluation']['metric'], checkpoint, metric,
                     params)
 
     if 'visualize' in args.do:
         if checkpoint is None:
             raise RuntimeError("checkpoint must be set but is None")
-        if args.app != 'flylight':
-            pred_folder = os.path.join(val_folder, 'processed', str(checkpoint))
-            inst_folder = os.path.join(val_folder, 'instanced', str(checkpoint))
-        else:
-            pred_folder = os.path.join(val_folder, str(checkpoint), 'processed')
-            inst_folder = os.path.join(val_folder, str(checkpoint), 'instanced')
+        pred_folder = os.path.join(val_folder, 'processed', str(checkpoint))
+        inst_folder = os.path.join(val_folder, 'instanced', str(checkpoint))
 
         visualize(args, config, pred_folder, inst_folder)
 
     if 'cross_validate' in args.do:
-        cross_validate(args, config, config['data']['val_data'], train_folder, val_folder)
+        cross_validate(
+            args, config, config['data']['val_data'], checkpoints,
+            train_folder, val_folder)
 
     if 'cleanup' in args.do:
         # if result from 'label' exists, dump result from 'predict'
