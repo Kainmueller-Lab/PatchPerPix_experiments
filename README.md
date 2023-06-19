@@ -1,3 +1,7 @@
+# Note
+
+Please check [https://github.com/Kainmueller-Lab/PatchPerPix](https://github.com/Kainmueller-Lab/PatchPerPix) for the up-to-date code for PatchPerPix! This repository is not updated anymore. It only stays online to enable the replication of older experiments.
+
 # PatchPerPix for Instance Segmentation
 
 ## Example experiment scripts for PatchPerPix
